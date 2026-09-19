@@ -40,7 +40,8 @@ var ERR = {
   conflict: '儲存衝突：這場測驗剛剛被別人（或別的視窗）修改過。請重新整理頁面後再編輯。',
   exists: '這個測驗代碼已經存在，請換一個',
   missing_title: '請輸入測驗名稱',
-  bad_quiz_id: '測驗代碼只能用英文、數字、- 與 _',
+  bad_quiz_id: '測驗代碼只能用英文、數字、- 與 _，而且至少要有一個英文字母（純數字會被 Google Sheet 弄丟前面的 0）',
+  not_found: '找不到這筆資料，可能已經被刪除。請重新整理頁面確認',
   bad_category_name: '類別名稱不合法',
   bad_category_items: '類別清單是空的，或超過 300 項'
 };
@@ -305,7 +306,7 @@ function openEditor(isNew, q) {
   $('#edRetake').checked = !!S.ed.data.allowRetake;
   $('#edId').value = q.id;
   $('#edId').disabled = !isNew;
-  $('#idHint').textContent = isNew ? '（英數字與 - _，建立後不能改）' : '（不能修改）';
+  $('#idHint').textContent = isNew ? '（英文字母、數字、- _，至少要有一個英文字母；建立後不能改）' : '（不能修改）';
   $('#edStatus').textContent = '';
   renderQuestions();
   renderQuizList();
@@ -477,6 +478,7 @@ function validateAndBuild() {
   var id = $('#edId').value.trim();
   if (!title) errs.push('請輸入測驗名稱');
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) errs.push('測驗代碼只能用英文、數字、- 與 _（最多 40 字）');
+  else if (!/[A-Za-z]/.test(id)) errs.push('測驗代碼至少要有一個英文字母（純數字例如 0919 會被 Google Sheet 弄丟前面的 0），可以改成 quiz0919');
   if (S.ed.isNew && findQuiz(id)) errs.push('測驗代碼「' + id + '」已經存在，請換一個');
   if (!d.questions.length) errs.push('至少要有 1 題');
 

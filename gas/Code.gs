@@ -261,7 +261,9 @@ function adminSaveCategory_(b) {
 
 function adminDeleteCategory_(b) {
   requireAdmin_(b.key);
-  withLock_(function () { deleteRow_(tab_(SHEET_CATS, ['name', 'items']), String(b.name || '')); });
+  withLock_(function () {
+    if (!deleteRows_(tab_(SHEET_CATS, ['name', 'items']), String(b.name || ''))) throw new Error('not_found');
+  });
   return { ok: true };
 }
 
@@ -284,17 +286,18 @@ function adminSaveQuiz_(b) {
 
 function adminDeleteQuiz_(b) {
   requireAdmin_(b.key);
-  const id = cleanQuizId_(b.quizId);
+  const id = cleanQuizId_(b.quizId, true);         // 刪除放寬規則：讓以前建立的「0919」這種舊代碼也刪得掉
   withLock_(function () {
-    deleteRow_(tab_(SHEET_QUIZZES, ['quizId', 'json', 'updatedAt']), id);
+    const n = deleteRows_(tab_(SHEET_QUIZZES, ['quizId', 'json', 'updatedAt']), id);
     CacheService.getScriptCache().remove('quiz:' + id);
+    if (!n) throw new Error('not_found');
   });
   return { ok: true };
 }
 
 function actionResults_(b) {
   requireAdmin_(b.key);
-  const quizId = b.quizId ? cleanQuizId_(b.quizId) : '';
+  const quizId = b.quizId ? cleanQuizId_(b.quizId, true) : '';
   const values = resultsSheet_().getDataRange().getValues();
   const quizIds = {};
   const rows = [];
@@ -302,7 +305,7 @@ function actionResults_(b) {
     const r = values[i];
     const qid = String(r[1]);
     quizIds[qid] = (quizIds[qid] || 0) + 1;
-    if (quizId && qid !== quizId) continue;
+    if (quizId && !keyEq_(r[1], quizId)) continue;
     rows.push({
       time: fmtTime_(r[0]),
       quizId: qid,
@@ -356,7 +359,7 @@ function findLatest_(userId, quizId) {
   const values = sh.getRange(2, 1, last - 1, RESULT_HEADERS.length).getValues();
   for (let i = values.length - 1; i >= 0; i--) {
     const r = values[i];
-    if (String(r[2]) === userId && (!quizId || String(r[1]) === quizId)) {
+    if (String(r[2]) === userId && (!quizId || keyEq_(r[1], quizId))) {
       return { score: Number(r[4]), total: Number(r[5]), sid: String(r[7] || '') };
     }
   }
@@ -396,21 +399,39 @@ function readRows_(sh) {
   const last = sh.getLastRow();
   return last < 2 ? [] : sh.getRange(2, 1, last - 1, sh.getLastColumn()).getValues();
 }
+/** 代碼比對。Google Sheet 有時會把「0919」這種長得像數字的字串存成數字 919（前導 0 不見了），這裡一併認得。 */
+function keyEq_(cell, key) {
+  key = String(key);
+  if (String(cell) === key) return true;
+  return typeof cell === 'number' && /^\d+$/.test(key) && String(cell) === String(Number(key));
+}
 function findRowIndex_(sh, key) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
   const keys = sh.getRange(2, 1, last - 1, 1).getValues();
-  for (let i = 0; i < keys.length; i++) if (String(keys[i][0]) === String(key)) return i + 2;
+  for (let i = 0; i < keys.length; i++) if (keyEq_(keys[i][0], key)) return i + 2;
   return 0;
+}
+/** 寫入一整列，並先把這幾格設成「純文字」，避免代碼、名稱被 Sheet 自動轉成數字或日期。 */
+function writeRow_(sh, row, values) {
+  const range = sh.getRange(row, 1, 1, values.length);
+  range.setNumberFormat('@');
+  range.setValues([values]);
 }
 function upsertRow_(sh, key, values) {
   const row = findRowIndex_(sh, key);
-  if (row) sh.getRange(row, 1, 1, values.length).setValues([values]);
-  else sh.appendRow(values);
+  writeRow_(sh, row || sh.getLastRow() + 1, values);
 }
-function deleteRow_(sh, key) {
-  const row = findRowIndex_(sh, key);
-  if (row) sh.deleteRow(row);
+/** 刪除所有代碼相符的列（由下往上刪），回傳刪了幾列。 */
+function deleteRows_(sh, key) {
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+  const keys = sh.getRange(2, 1, last - 1, 1).getValues();
+  let n = 0;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    if (keyEq_(keys[i][0], key)) { sh.deleteRow(i + 2); n++; }
+  }
+  return n;
 }
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
@@ -447,9 +468,11 @@ function requireAdmin_(key) {
   throw new Error('forbidden');
 }
 
-function cleanQuizId_(id) {
+function cleanQuizId_(id, allowLegacy) {
   id = String(id || '').trim();
   if (!/^[A-Za-z0-9_-]{1,60}$/.test(id)) throw new Error('bad_quiz_id');
+  // 至少要有一個英文字母：純數字（例如 0919）會被 Google Sheet 當成數字，前導 0 會不見
+  if (!allowLegacy && !/[A-Za-z]/.test(id)) throw new Error('bad_quiz_id');
   return id;
 }
 
