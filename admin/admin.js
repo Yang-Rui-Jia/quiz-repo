@@ -33,14 +33,15 @@ function busy(btn, fn) {
 
 // =====================================================================
 //  後端 API（Google Apps Script）
-//  題庫與測驗都存在 Google Sheet，不在公開的網頁裡；每次呼叫都帶管理密碼。
+//  題庫與測驗都存在後端資料庫，不在公開的網頁裡；每次呼叫都帶管理密碼。
 // =====================================================================
 var ERR = {
   forbidden: '管理密碼不正確',
   conflict: '儲存衝突：這場測驗剛剛被別人（或別的視窗）修改過。請重新整理頁面後再編輯。',
   exists: '這個測驗代碼已經存在，請換一個',
   missing_title: '請輸入測驗名稱',
-  bad_quiz_id: '測驗代碼只能用英文、數字、- 與 _，而且至少要有一個英文字母（純數字會被 Google Sheet 弄丟前面的 0）',
+  bad_quiz_id: '測驗代碼只能用英文、數字、- 與 _',
+  server_error: '伺服器發生錯誤，請稍後再試一次',
   not_found: '找不到這筆資料，可能已經被刪除。請重新整理頁面確認',
   bad_category_name: '類別名稱不合法',
   bad_category_items: '類別清單是空的，或超過 300 項'
@@ -52,16 +53,18 @@ function errText(code) {
   if (m) return '第 ' + m[2] + ' 題有問題：' + { bad_options: '選項不完整', bad_correct: '沒有選定正解', missing_question: '沒有題目文字' }[m[1]];
   return '伺服器回應：' + code;
 }
+function apiUrl() { return cfg.apiUrl || cfg.gasUrl || ''; }   // 新後端(Cloudflare)用 apiUrl；舊的 gasUrl 只是相容
 function call(action, payload) {
-  if (!cfg.gasUrl) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 gasUrl）'));
+  if (!apiUrl()) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 apiUrl）'));
   var rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
   var text = JSON.stringify(Object.assign({ action: action, key: S.key, rid: rid }, payload || {}));
   var attempt = 0;
   // 用 text/plain 送 JSON 可避免瀏覽器做 CORS 預檢，GAS 才收得到。
-  // Google 後端偶爾會回一個不是 JSON 的空殼回應（畫面上會看到 "Unexpected token 'L'..."），或網路瞬間斷掉：
+  // 網路瞬間斷掉，或（舊的 Google 後端）偶爾回一個不是 JSON 的空殼回應：
+  // 
   // 自動重試最多 4 次。每次重試帶同一個 rid，後端認得是同一次請求，儲存/刪除不會重複執行。
   function once() {
-    return fetch(cfg.gasUrl, { method: 'POST', body: text })
+    return fetch(apiUrl(), { method: 'POST', body: text })
       .then(function (r) { return r.text(); })
       .then(function (t) { return JSON.parse(t); })
       .catch(function () {
@@ -275,7 +278,7 @@ $('#quizList').onclick = function (e) {
     openEditor(true, { id: newQuizId(), updatedAt: '', data: d });
   }
   if (b.dataset.act === 'del') {
-    if (!confirm('確定刪除測驗「' + (q.data.title || q.id) + '」？\n已經印出去的 QRCode 會失效（作答紀錄仍保留在 Google Sheet）。')) return;
+    if (!confirm('確定刪除測驗「' + (q.data.title || q.id) + '」？\n已經印出去的 QRCode 會失效（作答紀錄仍會保留）。')) return;
     busy(b, function () {
       return call('admin_deleteQuiz', { quizId: q.id }).then(function () {
         S.quizzes = S.quizzes.filter(function (x) { return x.id !== q.id; });
@@ -306,7 +309,7 @@ function openEditor(isNew, q) {
   $('#edRetake').checked = !!S.ed.data.allowRetake;
   $('#edId').value = q.id;
   $('#edId').disabled = !isNew;
-  $('#idHint').textContent = isNew ? '（英文字母、數字、- _，至少要有一個英文字母；建立後不能改）' : '（不能修改）';
+  $('#idHint').textContent = isNew ? '（英文字母、數字、- _；建立後不能改）' : '（不能修改）';
   $('#edStatus').textContent = '';
   renderQuestions();
   renderQuizList();
@@ -478,7 +481,6 @@ function validateAndBuild() {
   var id = $('#edId').value.trim();
   if (!title) errs.push('請輸入測驗名稱');
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) errs.push('測驗代碼只能用英文、數字、- 與 _（最多 40 字）');
-  else if (!/[A-Za-z]/.test(id)) errs.push('測驗代碼至少要有一個英文字母（純數字例如 0919 會被 Google Sheet 弄丟前面的 0），可以改成 quiz0919');
   if (S.ed.isNew && findQuiz(id)) errs.push('測驗代碼「' + id + '」已經存在，請換一個');
   if (!d.questions.length) errs.push('至少要有 1 題');
 
@@ -607,16 +609,13 @@ function renderResultsInit() {
   sel.innerHTML = S.quizzes.map(function (q) { return '<option value="' + esc(q.id) + '">' + esc(q.data.title || q.id) + '（' + esc(q.id) + '）</option>'; }).join('') +
     '<option value="">（全部測驗）</option>';
   if (cur !== undefined && Array.prototype.some.call(sel.options, function (o) { return o.value === cur; })) sel.value = cur;
-  var link = $('#sheetLink');
-  link.classList.toggle('hidden', !cfg.sheetUrl);
-  if (cfg.sheetUrl) link.href = cfg.sheetUrl;
   $('#resErr').classList.add('hidden');
-  if (!cfg.gasUrl) { showResErr('系統還沒設定 Apps Script 網址。請系統擁有者打開 config.js 填入 gasUrl。'); }
+  if (!apiUrl()) { showResErr('系統還沒設定後端網址。請系統擁有者打開 config.js 填入 apiUrl。'); }
 }
 function showResErr(msg) { var e = $('#resErr'); e.textContent = msg; e.classList.remove('hidden'); }
 
 function loadResults() {
-  if (!cfg.gasUrl) return Promise.resolve();
+  if (!apiUrl()) return Promise.resolve();
   $('#resErr').classList.add('hidden');
   return call('results', { quizId: $('#resQuiz').value })
     .then(function (j) { renderResults(j.rows); })

@@ -4,9 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>現場互動測驗</title>
-<!-- 提前跟後端建立連線（省下第一次呼叫的握手時間） -->
-<link rel="preconnect" href="https://script.google.com">
-<link rel="preconnect" href="https://script.googleusercontent.com">
 <style>
 :root {
   --bg: #f3f6f4;
@@ -264,20 +261,24 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
     });
   }
 
-  // ---------- 後端 API（Google Apps Script） ----------
+  // ---------- 後端 API ----------
+  function apiUrl() { return cfg.apiUrl || cfg.gasUrl || ''; }   // 新後端(Cloudflare)用 apiUrl；舊的 gasUrl 只是相容
+  try {                                                          // 提前跟後端建立連線，省下第一次呼叫的握手時間
+    var pc = document.createElement('link'); pc.rel = 'preconnect'; pc.href = new URL(apiUrl()).origin; document.head.appendChild(pc);
+  } catch (e) {}
   // 用 text/plain 送 JSON，瀏覽器就不會做 CORS 預檢，GAS 才收得到。
   function api(payload) {
     if (MOCK) return mockApi(payload);
     payload.token = state.token; payload.key = state.key;
     payload.rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
-    if (!cfg.gasUrl) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 gasUrl）'));
+    if (!apiUrl()) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 apiUrl）'));
     var text = JSON.stringify(payload), attempt = 0;
     // Google 後端偶爾會回一個不是 JSON 的空殼回應，或網路瞬間斷掉：自動重試最多 4 次。
     // 每次重試帶同一個 rid / submissionId，後端認得是同一次請求，不會重複記錄成績。
     function once() {
       var ctrl = new AbortController();
       var timer = setTimeout(function () { ctrl.abort(); }, 15000);
-      return fetch(cfg.gasUrl, { method: 'POST', body: text, signal: ctrl.signal })
+      return fetch(apiUrl(), { method: 'POST', body: text, signal: ctrl.signal })
         .then(function (r) { return r.text(); })
         .then(function (t) { clearTimeout(timer); return JSON.parse(t); })
         .catch(function (e) {
@@ -392,6 +393,8 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
       missing_token: '登入狀態遺失，請關閉頁面後重新掃描 QRCode。',
       bad_quiz_id: '測驗代碼格式不正確。',
       quiz_not_found: '找不到這場測驗。請確認 QRCode 是否正確，或請管理者確認測驗仍然存在。',
+      line_unavailable: 'LINE 暫時無法確認身分，請稍後再試一次。',
+      server_error: '伺服器發生錯誤，請稍後再試一次。',
       forbidden: '管理密碼不正確，請重新登入管理後台。',
       bad_answers: '作答資料格式不正確，請重新整理頁面後再試一次。'
     };
