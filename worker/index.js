@@ -10,6 +10,7 @@
  *     CHANNEL_ACCESS_TOKEN  LINE Messaging API 的 Channel access token (long-lived)
  *     ADMIN_KEY             管理密碼（出題者登入後台用，請設 12 字以上）
  *     CHANNEL_SECRET        （建議）LINE Channel secret，用來驗證 webhook 真的來自 LINE
+ *     TURNSTILE_SECRET      （選用）Cloudflare Turnstile 的 Secret key；設了之後，後台登入要先通過「我不是機器人」驗證
  *
  * 資料表在第一次被呼叫時自動建立，並放入一場示範測驗 demo，不需要手動執行 SQL。
  *
@@ -19,7 +20,8 @@
  *   webhook：玩家在聊天室送出「查詢成績」→ 用 Reply API 免費回覆成績
  *
  * 安全設計：玩家身分（userId）不是前端傳來的，而是拿玩家的 LIFF access token
- * 直接問 LINE 伺服器；管理動作一律要帶 ADMIN_KEY。
+ * 直接問 LINE 伺服器。後台：用管理密碼登入（admin_login）換一張 7 天有效的登入憑證，
+ * 之後的管理動作都帶憑證，不再傳送管理密碼本身。登入有失敗次數鎖定，可再搭配 Turnstile。
  */
 
 // ===== 可調整的設定 =====
@@ -32,6 +34,7 @@ const MAX_RESULT_ROWS = 5000;
 const QUIZ_TTL_MS = 10 * 1000;               // 題目在記憶體裡快取的時間：後台改題目後，最多這麼久玩家端就會更新
 const TOKEN_TTL_MS = 5 * 60 * 1000;          // 「這個 token 是誰」的快取時間
 const DONE_TTL_MS = 60 * 1000;               // 「已作答過」的快取時間
+const SESSION_TTL_S = 7 * 24 * 3600;         // 後台登入憑證的有效時間
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -42,6 +45,11 @@ const CORS = {
 
 // 第一次啟動時放進去的範例資料（只有在「題庫」「測驗」是空的時候才會放）
 const SEED = {"categories":{"低硬度岩石":["石灰岩","頁岩","砂岩","泥岩","板岩","白雲岩","礫岩","凝灰岩"],"常見酒類":["啤酒","紅酒","白酒","清酒","威士忌","伏特加","高粱酒","琴酒","白蘭地","龍舌蘭"],"高硬度岩石":["花崗岩","石英岩","玄武岩","輝長岩","片麻岩","角閃岩","安山岩","流紋岩"]},"quiz":{"quizId":"demo","title":"示範測驗：岩石與酒類","description":"這是系統內建的示範測驗，共 10 大題、滿分 100 分。第 7 大題有 2 個子題，第 8 大題示範「部分給分」。作答時可用右上角「題目導覽」快速跳題。","allowRetake":true,"closed":false,"scoring":"equal","questions":[{"id":"q1","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q1","mode":"auto","question":"","options":["流紋岩","輝長岩","角閃岩","玄武岩","花崗岩"],"correctIndex":4,"points":10,"category":"高硬度岩石","answer":"花崗岩"}]},{"id":"q2","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q2","mode":"auto","question":"","options":["玄武岩","花崗岩","流紋岩","角閃岩","石英岩"],"correctIndex":0,"points":10,"category":"高硬度岩石","answer":"玄武岩"}]},{"id":"q3","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q3","mode":"auto","question":"","options":["頁岩","凝灰岩","砂岩","泥岩","石灰岩"],"correctIndex":4,"points":10,"category":"低硬度岩石","answer":"石灰岩"}]},{"id":"q4","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q4","mode":"auto","question":"","options":["凝灰岩","石灰岩","泥岩","板岩","頁岩"],"correctIndex":4,"points":10,"category":"低硬度岩石","answer":"頁岩"}]},{"id":"q5","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q5","mode":"manual","question":"以下哪種酒精飲料的酒精濃度最低？","options":["啤酒","威士忌","琴酒","高粱酒","伏特加"],"correctIndex":0,"points":10}]},{"id":"q6","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q6","mode":"auto","question":"","options":["高粱酒","清酒","威士忌","白蘭地","啤酒"],"correctIndex":1,"points":10,"category":"常見酒類","answer":"清酒"}]},{"id":"q7","title":"岩石分類：請回答下面兩個小題","multi":true,"subScoring":"equal","points":10,"items":[{"id":"q7-1","mode":"manual","question":"下列哪一種岩石屬於火成岩？","options":["石灰岩","花崗岩","大理岩","板岩","砂岩"],"correctIndex":1,"points":5},{"id":"q7-2","mode":"manual","question":"下列哪一種岩石屬於沉積岩？","options":["玄武岩","砂岩","石英岩","片麻岩","安山岩"],"correctIndex":1,"points":5}]},{"id":"q8","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q8","mode":"manual","question":"摩氏硬度表中，硬度最高的礦物是？","options":["螢石","滑石","方解石","石英","鑽石"],"correctIndex":4,"points":10,"partial":[0.3,0,0.3,0.5,1]}]},{"id":"q9","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q9","mode":"manual","question":"威士忌的主要原料是？","options":["甘蔗","龍舌蘭","葡萄","穀物","馬鈴薯"],"correctIndex":3,"points":10}]},{"id":"q10","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q10","mode":"auto","question":"","options":["石英岩","安山岩","輝長岩","角閃岩","玄武岩"],"correctIndex":2,"points":10,"category":"高硬度岩石","answer":"輝長岩"}]}]}};
+// 後台登入保護用的兩張表（舊資料庫第一次用到時會自動補建，不影響原本的資料）
+const GUARD_SCHEMA = [
+  'CREATE TABLE IF NOT EXISTS login_guard (ip TEXT PRIMARY KEY, fails INTEGER NOT NULL, first_at INTEGER NOT NULL, locked_until INTEGER NOT NULL)',
+  'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)'
+];
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY, items TEXT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS quizzes (quiz_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)',
@@ -51,7 +59,7 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS idx_results_user ON results (quiz_id, user_id, id)',
   // 同一次送出（網路重試）只會寫入一筆：由資料庫保證，不靠程式判斷
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_results_sid ON results (submission_id) WHERE submission_id IS NOT NULL AND submission_id <> ''"
-];
+].concat(GUARD_SCHEMA);
 
 // 同一個 Worker 實例內的記憶體快取（不同實例之間不共用，所以都設得很短）
 const quizCache = new Map();
@@ -74,7 +82,7 @@ export default {
     if (body && Array.isArray(body.events)) return handleWebhook(request, raw, body, env, ctx);
 
     try {
-      return json(await withInit(env, function () { return route(body || {}, env); }));
+      return json(await withInit(env, function () { return route(body || {}, env, request); }));
     } catch (err) {
       const msg = String(err && err.message || err);
       // 我們自己丟的錯誤都是像 forbidden、bad_quiz_id 這種代碼；其他（例如資料庫錯誤）不把細節傳給外面
@@ -84,13 +92,16 @@ export default {
   }
 };
 
-async function route(b, env) {
+async function route(b, env, request) {
   switch (b.action) {
     // 玩家
     case 'start':                return actionStart(b, env);
     case 'submit':               return actionSubmit(b, env);
     // 管理後台
+    case 'login_info':           return { ok: true, captcha: !!env.TURNSTILE_SECRET };
+    case 'admin_login':          return adminLogin(b, env, request);
     case 'results':              return actionResults(b, env);
+    case 'admin_purgeResults':   return adminPurgeResults(b, env);
     case 'admin_list':           return adminList(b, env);
     case 'admin_saveCategory':   return adminSaveCategory(b, env);
     case 'admin_deleteCategory': return adminDeleteCategory(b, env);
@@ -102,7 +113,9 @@ async function route(b, env) {
 }
 
 function json(obj) {
-  return new Response(JSON.stringify(obj), { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, CORS) });
+  return new Response(JSON.stringify(obj), { headers: Object.assign({
+    'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'
+  }, CORS) });
 }
 
 // ===== 配分工具 =====
@@ -143,8 +156,8 @@ function flatItems(quiz) {
 async function actionStart(b, env) {
   const quizId = cleanQuizId(b.quizId);
 
-  if (b.key) {                                   // 管理者預覽：不驗證 LINE、不記錄
-    await requireAdmin(env, b.key);
+  if (b.session) {                               // 管理者預覽：不驗證 LINE、不記錄
+    await requireAdmin(env, b);
     const q = await getQuiz(env, quizId);
     if (!q) return { ok: false, error: 'quiz_not_found' };
     return { ok: true, submitted: false, quiz: publicQuiz(q), preview: true, closed: !!q.closed };
@@ -179,8 +192,8 @@ function publicQuiz(q) {
 async function actionSubmit(b, env) {
   const quizId = cleanQuizId(b.quizId);
 
-  if (b.key) {                                   // 管理者預覽：算給他看，不寫入
-    await requireAdmin(env, b.key);
+  if (b.session) {                               // 管理者預覽：算給他看，不寫入
+    await requireAdmin(env, b);
     const q = await getQuiz(env, quizId);
     if (!q) throw new Error('quiz_not_found');
     const r = score(q, b.picks);
@@ -292,7 +305,7 @@ async function verifySignature(raw, secret, signature) {
 
 // ===== 管理後台 =====
 async function adminList(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const out = await env.DB.batch([
     env.DB.prepare('SELECT name, items FROM categories ORDER BY name'),
     env.DB.prepare('SELECT json, updated_at FROM quizzes ORDER BY updated_at DESC')
@@ -308,7 +321,7 @@ async function adminList(b, env) {
 }
 
 async function adminSaveCategory(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const name = String(b.name || '').trim();
   if (!name || name.length > 30 || /[\\\/:*?"<>|.#%]/.test(name)) throw new Error('bad_category_name');
   const seen = {}, items = [];
@@ -323,14 +336,14 @@ async function adminSaveCategory(b, env) {
 }
 
 async function adminDeleteCategory(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const res = await env.DB.prepare('DELETE FROM categories WHERE name = ?').bind(String(b.name || '')).run();
   if (!res.meta.changes) throw new Error('not_found');
   return { ok: true };
 }
 
 async function adminSaveQuiz(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const quiz = cleanQuiz(b.quiz || {});
   const text = JSON.stringify(quiz);
   const now = new Date().toISOString();
@@ -362,7 +375,7 @@ async function adminSaveQuiz(b, env) {
 
 /** 只改「是否開放作答」，題目與紀錄都不動。 */
 async function adminSetClosed(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const id = cleanQuizId(b.quizId);
   const row = await env.DB.prepare('SELECT json, updated_at FROM quizzes WHERE quiz_id = ?').bind(id).first();
   if (!row) throw new Error('not_found');
@@ -379,7 +392,7 @@ async function adminSetClosed(b, env) {
 }
 
 async function adminDeleteQuiz(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const id = cleanQuizId(b.quizId);
   const res = await env.DB.prepare('DELETE FROM quizzes WHERE quiz_id = ?').bind(id).run();
   quizCache.delete(id);
@@ -388,7 +401,7 @@ async function adminDeleteQuiz(b, env) {
 }
 
 async function actionResults(b, env) {
-  await requireAdmin(env, b.key);
+  await requireAdmin(env, b);
   const quizId = b.quizId ? cleanQuizId(b.quizId) : '';
   const out = await env.DB.batch([
     env.DB.prepare('SELECT quiz_id, COUNT(*) AS n FROM results GROUP BY quiz_id'),
@@ -402,6 +415,24 @@ async function actionResults(b, env) {
       score: r.score, total: r.total, answers: safeParse(r.answers, []) };
   });
   return { ok: true, quizIds: quizIds, rows: rows };
+}
+
+/**
+ * 清除作答紀錄——只能清「測驗已經被刪除」的紀錄。還存在的測驗，紀錄一律不能清。
+ * 判斷「測驗還在不在」跟刪除寫在同一個 SQL 裡，就算前端送來的資料有誤，也刪不到還在使用的測驗。
+ * quizId 空白 = 清掉全部「測驗已刪除」的紀錄；有填 = 只清那一個。
+ */
+async function adminPurgeResults(b, env) {
+  await requireAdmin(env, b);
+  const quizId = b.quizId ? cleanQuizId(b.quizId) : '';
+  if (quizId) {
+    const alive = await env.DB.prepare('SELECT 1 AS x FROM quizzes WHERE quiz_id = ?').bind(quizId).first();
+    if (alive) throw new Error('quiz_still_exists');
+  }
+  const res = await env.DB.prepare("DELETE FROM results WHERE (? = '' OR quiz_id = ?) AND NOT EXISTS (SELECT 1 FROM quizzes q WHERE q.quiz_id = results.quiz_id)")
+    .bind(quizId, quizId).run();
+  doneCache.clear();
+  return { ok: true, deleted: res.meta.changes };
 }
 
 /** 驗證並整理管理者送來的測驗；只保留我們定義的欄位。舊格式會先轉成新格式。 */
@@ -541,12 +572,123 @@ async function verifyUser(accessToken) {
   return user;
 }
 
-/** 管理密碼錯誤或沒設定一律拒絕；錯誤時故意延遲，拖慢暴力猜測。 */
-async function requireAdmin(env, key) {
-  const real = String(env.ADMIN_KEY || '');
-  if (real && safeEqual(await sha256Hex(String(key || '')), await sha256Hex(real))) return;
-  await new Promise(function (r) { setTimeout(r, 600); });
+// ===== 後台登入保護 =====
+// 1) 管理密碼只在 admin_login 用到：通過後換一張「登入憑證」（HMAC 簽章、7 天有效），之後的管理動作都帶憑證。
+// 2) 憑證的簽章金鑰 = 資料庫裡的隨機值 + 管理密碼：換掉 ADMIN_KEY，所有舊憑證立刻失效。
+// 3) 登入失敗會依來源 IP 計次並鎖定；有設 TURNSTILE_SECRET 時，還要先通過「我不是機器人」驗證。
+
+async function requireAdmin(env, b) {
+  if (String(env.ADMIN_KEY || '') && await checkSession(env, b && b.session)) return;
   throw new Error('forbidden');
+}
+
+async function adminLogin(b, env, request) {
+  const real = String(env.ADMIN_KEY || '');
+  const ip = clientIp(request);
+  const slot = await takeLoginSlot(env, ip);                                  // 先領名額（同時送很多次也只有前幾次能進來）
+  if (!slot.ok) return { ok: false, error: 'too_many_attempts', retryAfter: slot.retryAfter };
+
+  let error = '';
+  if (env.TURNSTILE_SECRET && !(await verifyTurnstile(env, b.turnstile))) error = 'captcha_failed';
+  else if (!(real && safeEqual(await sha256Hex(String(b.key || '').slice(0, 500)), await sha256Hex(real)))) error = 'forbidden';
+  if (error) {
+    await new Promise(function (r) { setTimeout(r, 600); });                  // 錯誤時故意慢一點
+    const wait = await lockedFor(env, ip);
+    return wait > 0 ? { ok: false, error: 'too_many_attempts', retryAfter: wait } : { ok: false, error: error };
+  }
+
+  await guardDb(env, function () { return env.DB.prepare('DELETE FROM login_guard WHERE ip = ?').bind(ip).run(); });
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_S;
+  return { ok: true, session: await signSession(env, exp), expiresAt: exp * 1000 };
+}
+
+/** 登入來源：IPv4 用完整位址；IPv6 同一個 /64 網段視為同一個來源（攻擊者通常握有整段位址可以輪流換）。 */
+function clientIp(request) {
+  const ip = String(request.headers.get('CF-Connecting-IP') || 'unknown').trim().toLowerCase().split('%')[0];
+  if (ip.indexOf(':') < 0) return ip;
+  let parts;
+  if (ip.indexOf('::') >= 0) {
+    const sides = ip.split('::'), l = sides[0] ? sides[0].split(':') : [], r = sides[1] ? sides[1].split(':') : [];
+    parts = l.concat(new Array(Math.max(0, 8 - l.length - r.length)).fill('0'), r);
+  } else parts = ip.split(':');
+  return parts.slice(0, 4).map(function (p) { return p.padStart(4, '0'); }).join(':') + '::/64';
+}
+
+/** 這兩張表是後來才加的：舊資料庫第一次用到時，單獨補建（不會重跑範例資料）。 */
+async function guardDb(env, fn) {
+  try { return await fn(); } catch (e) {
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+    await env.DB.batch(GUARD_SCHEMA.map(function (q) { return env.DB.prepare(q); }));
+    return await fn();
+  }
+}
+
+/**
+ * 領一個「嘗試登入」的名額。次數 +1 與「要不要鎖」在資料庫裡一次完成，所以同時送 100 次也只有前 5 次進得去：
+ *   第 5 次起鎖 5 分鐘；之後每次鎖期結束只能再試 1 次，第 8 次起鎖 30 分鐘、第 12 次起鎖 24 小時。
+ *   24 小時沒有再失敗，計數自動歸零。登入成功會清掉計數。
+ */
+async function takeLoginSlot(env, ip) {
+  const now = Math.floor(Date.now() / 1000);
+  return guardDb(env, async function () {
+    await env.DB.prepare('INSERT OR IGNORE INTO login_guard (ip, fails, first_at, locked_until) VALUES (?, 0, ?, 0)').bind(ip, now).run();
+    // 24 小時內都沒再失敗（而且沒被鎖）：計數歸零
+    await env.DB.prepare('UPDATE login_guard SET fails = 0, first_at = ? WHERE ip = ? AND first_at < ? AND locked_until <= ?').bind(now, ip, now - 86400, now).run();
+    // 次數 +1 與「要不要鎖」一次完成；正在鎖定中（locked_until 還沒到）的來源這句不會生效
+    const res = await env.DB.prepare(
+      'UPDATE login_guard SET fails = fails + 1, locked_until = CASE WHEN fails + 1 >= 12 THEN ? + 86400 WHEN fails + 1 >= 8 THEN ? + 1800 WHEN fails + 1 >= 5 THEN ? + 300 ELSE 0 END ' +
+      'WHERE ip = ? AND locked_until <= ?').bind(now, now, now, ip, now).run();
+    if (res.meta && res.meta.changes > 0) {
+      if (Math.random() < 0.05) await env.DB.prepare('DELETE FROM login_guard WHERE locked_until < ? AND first_at < ?').bind(now, now - 172800).run();   // 順手清掉很久以前的紀錄
+      return { ok: true };
+    }
+    return { ok: false, retryAfter: Math.max(1, (await lockedFor(env, ip)) || 60) };
+  });
+}
+
+async function lockedFor(env, ip) {
+  const now = Math.floor(Date.now() / 1000);
+  const row = await guardDb(env, function () { return env.DB.prepare('SELECT locked_until FROM login_guard WHERE ip = ?').bind(ip).first(); });
+  return row ? Math.max(0, row.locked_until - now) : 0;
+}
+
+async function verifyTurnstile(env, token) {
+  if (!token || String(token).length > 2048) return false;
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST', body: new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: String(token) })
+    });
+    const j = await res.json();
+    return !!j.success;
+  } catch (e) { console.error('turnstile verify failed', e && e.message); return false; }
+}
+
+// ---- 登入憑證：「到期時間.簽章」 ----
+let sessionKeyCache = null;
+async function getSessionKey(env) {
+  const adm = String(env.ADMIN_KEY || '');
+  if (sessionKeyCache && sessionKeyCache.exp > Date.now() && sessionKeyCache.adm === adm) return sessionKeyCache.key;
+  const read = function () { return env.DB.prepare("SELECT v FROM kv WHERE k = 'session_secret'").first(); };
+  let row = await guardDb(env, read);
+  if (!row) {
+    await env.DB.prepare("INSERT OR IGNORE INTO kv (k, v) VALUES ('session_secret', ?)").bind(randomHex(32)).run();
+    row = await read();
+  }
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(row.v + '|' + adm), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  sessionKeyCache = { key: key, adm: adm, exp: Date.now() + 10 * 60 * 1000 };
+  return key;
+}
+async function signSession(env, exp) {
+  const sig = await crypto.subtle.sign('HMAC', await getSessionKey(env), new TextEncoder().encode('admin-session|' + exp));
+  return exp + '.' + Array.from(new Uint8Array(sig)).map(function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+}
+async function checkSession(env, token) {
+  const m = /^(\d{9,12})\.[0-9a-f]{64}$/.exec(String(token || ''));
+  if (!m || Number(m[1]) < Date.now() / 1000) return false;
+  return safeEqual(await signSession(env, m[1]), token);
+}
+function randomHex(nBytes) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(nBytes))).map(function (x) { return x.toString(16).padStart(2, '0'); }).join('');
 }
 
 function cleanQuizId(id) {

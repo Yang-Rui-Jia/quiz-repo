@@ -17,5 +17,10 @@ window.APP_CONFIG = {
 
   // LINE 官方帳號的 Basic ID（要含 @），例如 "@123abcde"
   // 在 LINE Official Account Manager 左上角、或「設定 → 帳號設定」可以看到
-  oaId: "@254dxsyq"
+  oaId: "@254dxsyq",
+
+  // （選用）Cloudflare Turnstile 的 Site key，給後台登入頁的「我不是機器人」驗證用。
+  // 要啟用時：先在 Cloudflare 建立 Turnstile 小工具、把 Secret key 設成 Worker 的 TURNSTILE_SECRET（見 docs/01 的「進階：防機器人」），再把 Site key 填在這裡。
+  // 留空 = 不啟用（登入仍有失敗次數鎖定保護）。Site key 本來就是公開的，可以放心存在公開的 GitHub Repo。
+  turnstileSiteKey: ""
 };

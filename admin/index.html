@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<!-- 內容安全政策：只允許載入本站的程式；資料只能送到 workers.dev（後端）。萬一有人想塞惡意腳本進來，也跑不起來、送不出資料。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://*.workers.dev; frame-src https://challenges.cloudflare.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <title>測驗管理後台</title>
 <style>
 :root {
@@ -163,9 +166,10 @@ th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var
       <label class="f">管理密碼
         <input type="password" id="inKey" autocomplete="current-password" placeholder="輸入管理密碼">
       </label>
+      <div id="tsWrap" class="hidden" style="margin:0 0 12px"><div id="tsBox"></div></div>
       <div class="row"><button class="btn primary" id="btnConnect">登入</button></div>
       <div id="loginErr" class="notice err hidden" style="margin-top:14px"></div>
-      <p class="sub" style="margin:14px 0 0">密碼只會存在這台電腦的瀏覽器裡（登出即清除）。請只在自己的電腦使用，並且不要把密碼傳給別人。</p>
+      <p class="sub" style="margin:14px 0 0">登入後會在這台電腦的瀏覽器保存 7 天的登入狀態（<b>不會保存管理密碼本身</b>），按「登出」即清除。連續輸錯密碼會被暫時鎖定。請只在自己的電腦使用，並且不要把密碼傳給別人。</p>
     </div>
   </section>
 

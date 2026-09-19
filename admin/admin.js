@@ -1,5 +1,6 @@
 (function () {
 'use strict';
+if (window.top !== window.self) { document.body.textContent = '此頁面不能被嵌入其他網頁。'; return; }
 
 var cfg = window.APP_CONFIG || {};
 var LETTERS = 'ABCDEFGHIJ';
@@ -36,7 +37,7 @@ function busy(btn, fn) {
 //  題庫與測驗都存在後端資料庫，不在公開的網頁裡；每次呼叫都帶管理密碼。
 // =====================================================================
 var ERR = {
-  forbidden: '管理密碼不正確',
+  forbidden: '管理密碼不正確（或登入已過期）',
   conflict: '儲存衝突：這場測驗剛剛被別人（或別的視窗）修改過。請重新整理頁面後再編輯。',
   exists: '這個測驗代碼已經存在，請換一個',
   missing_title: '請輸入測驗名稱',
@@ -47,7 +48,9 @@ var ERR = {
   bad_category_name: '類別名稱不合法',
   bad_category_items: '類別清單是空的，或超過 300 項',
   bad_questions: '題目數量不正確（至少 1 大題）',
-  bad_total: '各大題配分加總必須剛好 100 分'
+  bad_total: '各大題配分加總必須剛好 100 分',
+  captcha_failed: '機器人驗證沒有通過，請重新驗證後再試一次',
+  quiz_still_exists: '這場測驗還存在，它的作答紀錄不能清除。若真的要清除，請先刪除該測驗'
 };
 function errText(code) {
   code = String(code || '');
@@ -65,7 +68,7 @@ function apiUrl() { return cfg.apiUrl || cfg.gasUrl || ''; }   // 新後端(Clou
 function call(action, payload) {
   if (!apiUrl()) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 apiUrl）'));
   var rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
-  var text = JSON.stringify(Object.assign({ action: action, key: S.key, rid: rid }, payload || {}));
+  var text = JSON.stringify(Object.assign({ action: action, session: S.session, rid: rid }, payload || {}));
   var attempt = 0;
   // 用 text/plain 送 JSON 可避免瀏覽器做 CORS 預檢，GAS 才收得到。
   // 網路瞬間斷掉，或（舊的 Google 後端）偶爾回一個不是 JSON 的空殼回應：
@@ -81,7 +84,7 @@ function call(action, payload) {
       });
   }
   return once().then(function (j) {
-    if (!j.ok) { var e = new Error(errText(j.error)); e.code = j.error; throw e; }
+    if (!j.ok) { var e = new Error(errText(j.error)); e.code = j.error; e.data = j; throw e; }
     return j;
   });
 }
@@ -90,7 +93,7 @@ function call(action, payload) {
 //  狀態
 // =====================================================================
 var S = {
-  key: '',
+  session: '',       // 登入憑證（不是管理密碼；管理密碼只在登入那一刻送出，不會存在瀏覽器裡）
   cats: {},          // name -> {items[], loaded, isNew}
   catNames: [],
   quizzes: [],       // [{id, updatedAt, data}]
@@ -109,6 +112,7 @@ function showLogin(err) {
   $$('main > section').forEach(function (s) { s.classList.toggle('hidden', s.id !== 'p-login'); });
   $('#loginErr').classList.toggle('hidden', !err);
   if (err) $('#loginErr').textContent = err;
+  initCaptcha();
 }
 
 function applyList(j) {
@@ -119,31 +123,77 @@ function applyList(j) {
     .sort(function (a, b) { return String(b.updatedAt).localeCompare(String(a.updatedAt)); });
 }
 
-function connect(key) {
-  key = key.trim();
-  if (!key) return Promise.reject(new Error('請輸入管理密碼'));
-  S.key = key;
+/** 進入後台：用目前的登入憑證讀取資料 */
+function enter() {
   return call('admin_list').then(function (j) {
     applyList(j);
     $('#boot').classList.add('hidden');
-    store('quizAdminKey', key);                  // 玩家頁的「預覽」也會用到它
     $('#whoText').textContent = '👤 已登入';
     $('#tabs').classList.remove('hidden'); $('#who').classList.remove('hidden');
     switchTab('quizzes');
   });
 }
 
+// ---- 機器人驗證（Cloudflare Turnstile，選用）：後端有設 TURNSTILE_SECRET 才會出現 ----
+var cap = { state: 'idle', token: '', widget: null };   // state: idle → loading → ready / off / broken
+function initCaptcha() {
+  if (cap.state !== 'idle') return;
+  cap.state = 'loading';
+  call('login_info').then(function (j) {
+    if (!j.captcha) { cap.state = 'off'; return; }
+    if (!cfg.turnstileSiteKey) throw new Error('後端已啟用機器人驗證，但 config.js 還沒填 turnstileSiteKey。請系統擁有者設定。');
+    return new Promise(function (resolve, reject) {
+      var sc = document.createElement('script');
+      sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      sc.async = true; sc.onload = resolve; sc.onerror = function () { reject(new Error('無法載入機器人驗證元件（網路或瀏覽器的廣告攔截擋住了？）')); };
+      document.head.appendChild(sc);
+    }).then(function () {
+      $('#tsWrap').classList.remove('hidden');
+      cap.widget = window.turnstile.render('#tsBox', {
+        sitekey: cfg.turnstileSiteKey,
+        callback: function (t) { cap.token = t; },
+        'expired-callback': function () { cap.token = ''; },
+        'error-callback': function () { cap.token = ''; }
+      });
+      cap.state = 'ready';
+    });
+  }).catch(function (e) { cap.state = 'broken'; $('#loginErr').textContent = e.message; $('#loginErr').classList.remove('hidden'); });
+}
+function resetCaptcha() { cap.token = ''; if (cap.state === 'ready') { try { window.turnstile.reset(cap.widget); } catch (e) {} } }
+
+function waitText(sec) { return sec >= 3600 ? Math.ceil(sec / 3600) + ' 小時' : Math.max(1, Math.ceil(sec / 60)) + ' 分鐘'; }
+
+/** 用管理密碼登入：成功會拿到一張 7 天有效的登入憑證，之後只用憑證 */
+function login(key) {
+  key = key.trim();
+  if (!key) return Promise.reject(new Error('請輸入管理密碼'));
+  if (cap.state === 'broken') return Promise.reject(new Error($('#loginErr').textContent || '機器人驗證元件無法使用'));
+  if (cap.state === 'loading') return Promise.reject(new Error('機器人驗證還在載入，請稍候再按一次'));
+  if (cap.state === 'ready' && !cap.token) return Promise.reject(new Error('請先完成上方的「我不是機器人」驗證'));
+  S.session = '';
+  return call('admin_login', { key: key, turnstile: cap.token }).then(function (j) {
+    S.session = j.session;
+    store('quizAdminSession', j.session);          // 玩家頁的「預覽」也會用到它
+    $('#inKey').value = '';
+    return enter();
+  }).catch(function (e) {
+    S.session = '';
+    resetCaptcha();                                // 驗證碼只能用一次
+    if (e.code === 'too_many_attempts') throw new Error('登入嘗試次數過多，為了安全暫時鎖定。請約 ' + waitText((e.data && e.data.retryAfter) || 300) + '後再試。');
+    throw e;
+  });
+}
+
 $('#btnConnect').onclick = function () {
   var btn = this;
   btn.disabled = true;
-  connect($('#inKey').value).catch(function (e) {
-    S.key = '';
+  login($('#inKey').value).catch(function (e) {
     showLogin(e.message);
   }).then(function () { btn.disabled = false; });
 };
 $('#inKey').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('#btnConnect').click(); });
 $('#btnLogout').onclick = function () {
-  store('quizAdminKey', null); S.key = '';
+  store('quizAdminSession', null); S.session = '';
   $('#inKey').value = '';
   S.ed = null;
   showLogin();
@@ -847,8 +897,9 @@ function renderPubBody() {
       'h1{font-size:44px;margin:10px 0 4px}p{font-size:24px;color:#333;margin:6px 0}img{width:70vmin;max-width:520px;margin:18px auto;display:block}' +
       '.s{font-size:20px;color:#555}</style></head><body><h1>' + title + '</h1><p>用 LINE 掃描 QRCode，開始作答</p>' +
       '<img src="' + img + '" alt="QRCode"><p class="s">① 開啟 LINE → 掃描 QRCode　② 完成作答　③ 按「查詢成績」取得分數</p>' +
-      '<script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>');
+      '</body></html>');
     w.document.close();
+    setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 500);
   };
 }
 
@@ -873,11 +924,11 @@ function loadResults() {
   if (!apiUrl()) return Promise.resolve();
   $('#resErr').classList.add('hidden');
   return call('results', { quizId: $('#resQuiz').value })
-    .then(function (j) { renderResults(j.rows); })
+    .then(function (j) { renderResults(j.rows, j.quizIds || {}); })
     .catch(function (e) { showResErr(e.message); });
 }
 
-function renderResults(rows) {
+function renderResults(rows, quizIds) {
   var quizId = $('#resQuiz').value, quiz = quizId ? findQuiz(quizId) : null;
   // 每位玩家取最新一筆作為成績
   var latest = {}, count = {};
@@ -920,6 +971,7 @@ function renderResults(rows) {
       return '<tr><td>' + esc(r.time) + '</td><td>' + esc(r.name) + '</td><td><b>' + fmt(r.score) + '</b> / ' + fmt(r.total) + '</td><td>' +
         (r._n > 1 ? '<span class="badge a">第 ' + r._n + ' 次作答</span>' : '') + '</td>' + (quizId ? '' : '<td class="mono">' + esc(r.quizId) + '</td>') + '</tr>';
     }).join('') || '<tr><td colspan="5" class="sub">還沒有作答紀錄</td></tr>') + '</tbody></table></div></div>';
+  html += orphanHtml(quizIds);
   $('#resBody').innerHTML = html;
 
   var csvBtn = $('#btnCsv');
@@ -939,6 +991,35 @@ function itemLabel(quiz, id) {
   var text = it ? (it.mode === 'auto' ? it.answer : it.question) : '';
   return '第 ' + m[1] + ' 大題' + (m[2] ? ' (' + m[2] + ')' : '') + (text ? '：' + text : '');
 }
+/** 測驗已被刪除、但作答紀錄還留著的代碼。還存在的測驗不會出現在這裡，也就不能被清除。 */
+function orphanIds(quizIds) {
+  return Object.keys(quizIds || {}).filter(function (id) { return !findQuiz(id); }).sort();
+}
+function orphanHtml(quizIds) {
+  var ids = orphanIds(quizIds);
+  if (!ids.length) return '';
+  var total = ids.reduce(function (s, id) { return s + quizIds[id]; }, 0);
+  return '<div class="card" id="orphanBox"><div class="row"><h2 style="font-size:16px">已刪除測驗的作答紀錄</h2><span class="sp"></span>' +
+    '<button class="btn sm danger" data-purge="">全部清除（' + total + ' 筆）</button></div>' +
+    '<p class="sub" style="margin:6px 0 10px;font-size:13px">這些測驗已經被刪除，紀錄只是留在資料庫裡。可以清除；<b>還存在的測驗，紀錄不能清除</b>（要清除請先刪除該測驗）。清除後無法復原，建議先切到「全部測驗」按「下載 CSV」備份。</p>' +
+    '<table><tbody>' + ids.map(function (id) {
+      return '<tr><td class="mono">' + esc(id) + '</td><td>' + quizIds[id] + ' 筆</td><td style="text-align:right"><button class="btn sm danger" data-purge="' + esc(id) + '">清除</button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+$('#resBody').addEventListener('click', function (e) {
+  var b = e.target.closest('[data-purge]');
+  if (!b) return;
+  var id = b.dataset.purge;
+  var msg = id ? '確定清除已刪除測驗「' + id + '」的作答紀錄？\n清除後無法復原。' : '確定清除「所有已刪除測驗」的作答紀錄？\n還存在的測驗不會受影響。清除後無法復原。';
+  if (!confirm(msg)) return;
+  busy(b, function () {
+    return call('admin_purgeResults', { quizId: id }).then(function (j) {
+      toast('已清除 ' + j.deleted + ' 筆紀錄');
+      return loadResults();
+    });
+  });
+});
+
 function stat(v, k) { return '<div class="stat"><div class="v">' + esc(v) + '</div><div class="k">' + esc(k) + '</div></div>'; }
 
 $('#btnLoadRes').onclick = function () { busy(this, loadResults); };
@@ -951,16 +1032,18 @@ $('#resAuto').onchange = function () {
 //  啟動
 // =====================================================================
 (function init() {
-  var saved = store('quizAdminKey');
+  store('quizAdminKey', null);                   // 舊版把管理密碼明碼存在這台瀏覽器：升級後清掉
+  var saved = store('quizAdminSession');
   if (!saved) return showLogin();
-  connect(saved).catch(function (e) {
-    if (e.code === 'forbidden') {                // 密碼確實錯了（例如被換掉）：才清除記住的密碼
-      store('quizAdminKey', null);
-      showLogin('管理密碼已失效，請重新輸入。');
-    } else {                                     // 網路不穩、後端剛好慢等暫時性問題：保留密碼，讓使用者按一下重試
-      S.key = '';
-      $('#inKey').value = saved;
-      showLogin(e.message + '（已幫你保留密碼，按「登入」重試即可）');
+  var exp = Number(String(saved).split('.')[0]);
+  if (!(exp > Date.now() / 1000)) { store('quizAdminSession', null); return showLogin('登入已過期，請重新輸入管理密碼。'); }
+  S.session = saved;
+  enter().catch(function (e) {
+    if (e.code === 'forbidden') {                // 憑證失效（例如管理密碼被換掉）：清掉，重新登入
+      store('quizAdminSession', null); S.session = '';
+      showLogin('登入已失效，請重新輸入管理密碼。');
+    } else {                                     // 網路不穩、後端剛好慢等暫時性問題：保留登入狀態，重新整理頁面就好
+      showLogin(e.message + '（你的登入狀態還在，重新整理頁面即可重試；也可以直接重新登入）');
     }
   });
 })();

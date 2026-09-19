@@ -271,7 +271,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
 
   var $ = function (id) { return document.getElementById(id); };
   var state = {
-    quizId: '', quiz: null, userId: '', name: '', token: '', key: '', sid: '',
+    quizId: '', quiz: null, userId: '', name: '', token: '', session: '', sid: '',
     answers: [], submitted: false, score: 0, total: 0, recorded: false
   };
 
@@ -313,7 +313,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
   // 用 text/plain 送 JSON，瀏覽器就不會做 CORS 預檢，GAS 才收得到。
   function api(payload) {
     if (MOCK) return mockApi(payload);
-    payload.token = state.token; payload.key = state.key;
+    payload.token = state.token; payload.session = state.session;
     payload.rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
     if (!apiUrl()) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 apiUrl）'));
     var text = JSON.stringify(payload), attempt = 0;
@@ -390,8 +390,8 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
       }
       if (PREVIEW) {
         state.userId = 'preview'; state.name = '預覽';
-        try { state.key = localStorage.getItem('quizAdminKey') || ''; } catch (e) {}
-        if (!state.key) throw new Error('請先登入管理後台，再從後台「發布」頁開啟預覽。');
+        try { state.session = localStorage.getItem('quizAdminSession') || ''; } catch (e) {}
+        if (!state.session) throw new Error('請先登入管理後台，再從後台「發布」頁開啟預覽。');
         return;
       }
       if (!cfg.liffId) throw new Error('系統尚未設定完成（config.js 缺少 liffId）');
@@ -450,7 +450,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
       quiz_closed: '這場測驗已經結束，不再接受作答。',
       line_unavailable: 'LINE 暫時無法確認身分，請稍後再試一次。',
       server_error: '伺服器發生錯誤，請稍後再試一次。',
-      forbidden: '管理密碼不正確，請重新登入管理後台。',
+      forbidden: '後台登入已過期，請重新登入管理後台，再從「發布」頁開啟預覽。',
       bad_answers: '作答資料格式不正確，請重新整理頁面後再試一次。'
     };
     return map[code] || ('系統回應異常（' + code + '）');
