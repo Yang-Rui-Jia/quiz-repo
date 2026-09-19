@@ -63,6 +63,7 @@ textarea { resize:vertical; }
 .badge { display:inline-block; padding:1px 9px; border-radius:99px; font-size:12px; font-weight:700; background:var(--bg); color:var(--muted); }
 .badge.g { background:var(--green-soft); color:var(--green-dark); }
 .badge.a { background:var(--amber-soft); color:var(--amber); }
+.badge.r { background:var(--red-soft); color:var(--red); }
 code, .mono { font-family:ui-monospace,Consolas,monospace; font-size:13px; }
 ol.steps { padding-left:20px; margin:8px 0 0; }
 ol.steps li { margin:6px 0; }
@@ -177,7 +178,10 @@ th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var
         <div class="grid3" style="grid-template-columns:1fr auto;align-items:end">
           <label class="f" style="margin:0">測驗代碼 <small id="idHint">（英文字母、數字、- _；建立後不能改）</small>
             <input type="text" id="edId" class="mono"></label>
-          <label class="f" style="margin:0;padding-bottom:8px"><input type="checkbox" id="edRetake" style="width:auto;display:inline;margin-right:6px">允許重複作答</label>
+          <div style="padding-bottom:8px">
+            <label class="f" style="margin:0 0 4px;display:block"><input type="checkbox" id="edRetake" style="width:auto;display:inline;margin-right:6px">允許重複作答</label>
+            <label class="f" style="margin:0;display:block"><input type="checkbox" id="edOpen" checked style="width:auto;display:inline;margin-right:6px">開放作答</label>
+          </div>
         </div>
       </div>
 

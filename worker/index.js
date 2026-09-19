@@ -96,6 +96,7 @@ async function route(b, env) {
     case 'admin_deleteCategory': return adminDeleteCategory(b, env);
     case 'admin_saveQuiz':       return adminSaveQuiz(b, env);
     case 'admin_deleteQuiz':     return adminDeleteQuiz(b, env);
+    case 'admin_setClosed':      return adminSetClosed(b, env);
     default:                     return { ok: false, error: 'unknown_action' };
   }
 }
@@ -112,12 +113,13 @@ async function actionStart(b, env) {
     await requireAdmin(env, b.key);
     const q = await getQuiz(env, quizId);
     if (!q) return { ok: false, error: 'quiz_not_found' };
-    return { ok: true, submitted: false, quiz: publicQuiz(q), preview: true };
+    return { ok: true, submitted: false, quiz: publicQuiz(q), preview: true, closed: !!q.closed };
   }
 
   const both = await Promise.all([getQuiz(env, quizId), verifyUser(b.token)]);   // 兩件事同時做
   const quiz = both[0], user = both[1];
   if (!quiz) return { ok: false, error: 'quiz_not_found' };
+  if (quiz.closed) return { ok: false, error: 'quiz_closed' };       // 已關閉：不給題目
   if (!quiz.allowRetake) {                       // 允許重考的測驗根本不用查紀錄
     const rec = await findDone(env, user.userId, quizId);
     if (rec) return { ok: true, submitted: true, score: rec.score, total: rec.total };
@@ -150,6 +152,7 @@ async function actionSubmit(b, env) {
   const both = await Promise.all([getQuiz(env, quizId), verifyUser(b.token)]);
   const quiz = both[0], user = both[1];
   if (!quiz) throw new Error('quiz_not_found');
+  if (quiz.closed) return { ok: false, error: 'quiz_closed' };
   const r = score(quiz, b.picks);
   const sid = str(b.submissionId, 64);
   const values = [new Date().toISOString(), quizId, user.userId, user.displayName, r.score, r.total,
@@ -316,6 +319,24 @@ async function adminSaveQuiz(b, env) {
   return { ok: true, updatedAt: now, quiz: quiz };
 }
 
+/** 只改「是否開放作答」，題目與紀錄都不動。 */
+async function adminSetClosed(b, env) {
+  await requireAdmin(env, b.key);
+  const id = cleanQuizId(b.quizId);
+  const row = await env.DB.prepare('SELECT json, updated_at FROM quizzes WHERE quiz_id = ?').bind(id).first();
+  if (!row) throw new Error('not_found');
+  const q = JSON.parse(row.json);
+  q.closed = !!b.closed;
+  const quiz = cleanQuiz(q);
+  const now = new Date().toISOString();
+  // 只在「還是我讀到的那一版」時才更新，避免蓋掉別人同時做的修改
+  const res = await env.DB.prepare('UPDATE quizzes SET json = ?, updated_at = ? WHERE quiz_id = ? AND updated_at = ?')
+    .bind(JSON.stringify(quiz), now, id, row.updated_at).run();
+  if (!res.meta.changes) throw new Error('conflict');
+  quizCache.delete(id);
+  return { ok: true, updatedAt: now, closed: quiz.closed };
+}
+
 async function adminDeleteQuiz(b, env) {
   await requireAdmin(env, b.key);
   const id = cleanQuizId(b.quizId);
@@ -358,7 +379,7 @@ function cleanQuiz(q) {
     else if (!out.question) throw new Error('missing_question_q' + (i + 1));
     return out;
   });
-  return { quizId: quizId, title: title, description: str(q.description, 500), allowRetake: !!q.allowRetake, questions: questions };
+  return { quizId: quizId, title: title, description: str(q.description, 500), allowRetake: !!q.allowRetake, closed: !!q.closed, questions: questions };
 }
 
 // ===== 資料存取 =====

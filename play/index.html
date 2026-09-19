@@ -161,6 +161,15 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
     <p class="hint">按下後會開啟聊天室，並自動帶入一句話，<br>你只要按「送出」就會收到成績訊息。</p>
   </section>
 
+  <!-- 測驗已關閉 -->
+  <section id="v-closed" class="center hidden">
+    <div class="emoji">🔒</div>
+    <h1>這場測驗已結束</h1>
+    <p class="desc">目前不開放作答，感謝你的參與。</p>
+    <p class="hint">如果你已經作答過，可以按下面的按鈕，在官方帳號聊天室查詢自己的成績。</p>
+    <div class="stack"><button class="btn" data-action="query">用 LINE 查詢我的成績</button></div>
+  </section>
+
   <!-- 作答頁 -->
   <section id="v-quiz" class="hidden">
     <h1 id="quizTitle"></h1>
@@ -238,7 +247,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
     });
   }
   function show(id) {
-    ['v-loading', 'v-error', 'v-friend', 'v-done', 'v-quiz', 'v-review', 'v-result'].forEach(function (v) {
+    ['v-loading', 'v-error', 'v-friend', 'v-done', 'v-closed', 'v-quiz', 'v-review', 'v-result'].forEach(function (v) {
       $(v).classList.toggle('hidden', v !== id);
     });
     window.scrollTo(0, 0);
@@ -360,6 +369,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
     }).then(function (res) {
       var r = res[0], isFriend = res[2];
       if (!isFriend) return;                     // 已顯示「先加入好友」畫面
+      if (r.error === 'quiz_closed') return show('v-closed');
       if (!r.ok) throw new Error(explainError(r.error));
       if (r.submitted) return showDone(r.score, r.total);
       state.quiz = r.quiz;
@@ -393,6 +403,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
       missing_token: '登入狀態遺失，請關閉頁面後重新掃描 QRCode。',
       bad_quiz_id: '測驗代碼格式不正確。',
       quiz_not_found: '找不到這場測驗。請確認 QRCode 是否正確，或請管理者確認測驗仍然存在。',
+      quiz_closed: '這場測驗已經結束，不再接受作答。',
       line_unavailable: 'LINE 暫時無法確認身分，請稍後再試一次。',
       server_error: '伺服器發生錯誤，請稍後再試一次。',
       forbidden: '管理密碼不正確，請重新登入管理後台。',
@@ -523,6 +534,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
           setScore(r.score, r.total);
           return recorded('偵測到您之前已作答過，以先前成績為準');
         }
+        if (r.error === 'quiz_closed') return show('v-closed');     // 作答到一半被關閉：直接顯示「已結束」
         throw new Error(explainError(r.error));
       }).catch(function (e) {
         $('resultSpin').classList.add('hidden');

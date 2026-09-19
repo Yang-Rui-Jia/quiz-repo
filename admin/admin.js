@@ -43,6 +43,7 @@ var ERR = {
   bad_quiz_id: '測驗代碼只能用英文、數字、- 與 _',
   server_error: '伺服器發生錯誤，請稍後再試一次',
   not_found: '找不到這筆資料，可能已經被刪除。請重新整理頁面確認',
+  quiz_closed: '這場測驗已經關閉',
   bad_category_name: '類別名稱不合法',
   bad_category_items: '類別清單是空的，或超過 300 項'
 };
@@ -255,7 +256,9 @@ function renderQuizList() {
     var d = q.data;
     return '<div class="card"><div class="qrow"><div class="t"><b>' + esc(d.title || q.id) + '</b>' +
       '<div><span class="mono">' + esc(q.id) + '</span>　' + (d.questions || []).length + ' 題　' +
-      (d.allowRetake ? '<span class="badge a">可重複作答</span>' : '<span class="badge g">每人限一次</span>') + '</div></div>' +
+      (d.allowRetake ? '<span class="badge a">可重複作答</span>' : '<span class="badge g">每人限一次</span>') +
+      (d.closed ? '　<span class="badge r">🔒 已關閉</span>' : '') + '</div></div>' +
+      '<button class="btn sm" data-act="toggle" data-id="' + esc(q.id) + '">' + (d.closed ? '重新開放' : '關閉作答') + '</button>' +
       '<button class="btn sm" data-act="edit" data-id="' + esc(q.id) + '">編輯</button>' +
       '<button class="btn sm" data-act="pub" data-id="' + esc(q.id) + '">發布 / QRCode</button>' +
       '<button class="btn sm" data-act="copy" data-id="' + esc(q.id) + '">複製</button>' +
@@ -271,6 +274,16 @@ $('#quizList').onclick = function (e) {
   var q = findQuiz(b.dataset.id);
   if (!q) return;
   if (b.dataset.act === 'edit') openEditor(false, q);
+  if (b.dataset.act === 'toggle') {
+    var closing = !q.data.closed;
+    if (closing && !confirm('確定關閉「' + (q.data.title || q.id) + '」？\n關閉後，玩家掃碼只會看到「這場測驗已結束」。題目和作答紀錄都會保留，隨時可以重新開放。')) return;
+    busy(b, function () {
+      return call('admin_setClosed', { quizId: q.id, closed: closing }).then(function (j) {
+        q.data.closed = j.closed; q.updatedAt = j.updatedAt; q.data.updatedAt = j.updatedAt;
+        renderQuizList(); toast(closing ? '已關閉作答（幾秒內生效）' : '已重新開放作答');
+      });
+    });
+  }
   if (b.dataset.act === 'pub') { switchTab('publish'); $('#pubQuiz').value = q.id; renderPubBody(); }
   if (b.dataset.act === 'copy') {
     var d = clone(q.data);
@@ -307,6 +320,7 @@ function openEditor(isNew, q) {
   $('#edTitle').value = S.ed.data.title || '';
   $('#edDesc').value = S.ed.data.description || '';
   $('#edRetake').checked = !!S.ed.data.allowRetake;
+  $('#edOpen').checked = !S.ed.data.closed;
   $('#edId').value = q.id;
   $('#edId').disabled = !isNew;
   $('#idHint').textContent = isNew ? '（英文字母、數字、- _；建立後不能改）' : '（不能修改）';
@@ -321,7 +335,7 @@ $('#btnEdBack').onclick = function () {
   if (S.dirty && !confirm('還沒儲存，確定要離開嗎？')) return;
   leaveEditor();
 };
-['#edTitle', '#edDesc', '#edRetake', '#edId'].forEach(function (sel) {
+['#edTitle', '#edDesc', '#edRetake', '#edOpen', '#edId'].forEach(function (sel) {
   $(sel).addEventListener('input', function () { S.dirty = true; });
 });
 window.addEventListener('beforeunload', function (e) { if (S.ed && S.dirty) { e.preventDefault(); e.returnValue = ''; } });
@@ -501,7 +515,7 @@ function validateAndBuild() {
     return { id: 'q' + (i + 1), mode: 'manual', question: q.question.trim(), options: opts, correctIndex: q.correctIndex };
   });
   return { errs: errs, bad: bad, quiz: {
-    quizId: id, title: title, description: $('#edDesc').value.trim(), allowRetake: $('#edRetake').checked,
+    quizId: id, title: title, description: $('#edDesc').value.trim(), allowRetake: $('#edRetake').checked, closed: !$('#edOpen').checked,
     updatedAt: new Date().toISOString(), questions: out } };
 }
 
@@ -569,6 +583,7 @@ function renderPubBody() {
     '<div class="qrbox"><canvas id="qrCanvas"></canvas><div style="flex:1;min-width:260px">' +
     '<label class="f">玩家掃描的網址（QRCode 的內容）<div class="urlbox"><input type="text" id="pubUrl" readonly value="' + esc(url) + '"><button class="btn" id="btnCopy">複製</button></div></label>' +
     '<div class="row" style="margin:12px 0"><button class="btn primary" id="btnDl">下載 QRCode（PNG）</button><button class="btn" id="btnPoster">列印海報</button></div>' +
+    (q.data.closed ? '<div class="notice err">🔒 這場測驗目前是「已關閉」，玩家掃碼只會看到「這場測驗已結束」。要讓人作答，請先回「測驗」列表按「重新開放」。</div>' : '') +
     '<div class="notice">⚠️ <b>印出去之前請先測試：</b>用手機 LINE 掃這個 QRCode，確認能開到測驗、題目正確。</div>' +
     '<p class="sub" style="margin:0"><a href="' + esc(preview) + '" target="_blank" rel="noopener">開啟「預覽」</a>（用這場測驗的真實題目，在電腦瀏覽器就能作答一次；不會連 LINE、不會記錄成績）</p>' +
     '</div></div>';
