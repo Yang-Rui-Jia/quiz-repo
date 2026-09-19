@@ -138,6 +138,9 @@ th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var
 </header>
 
 <main>
+  <!-- 自動登入等待後端回應時顯示（Google 後端偶爾要幾秒） -->
+  <div id="boot" class="sub" style="text-align:center;margin-top:90px">載入中…（連線後台，最多需要幾秒）</div>
+
   <!-- ========== 連線 ========== -->
   <section id="p-login" class="hidden">
     <div class="card" style="max-width:520px;margin:30px auto">

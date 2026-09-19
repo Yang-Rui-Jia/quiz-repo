@@ -81,6 +81,7 @@ var S = {
 //  登入 / 連線
 // =====================================================================
 function showLogin(err) {
+  $('#boot').classList.add('hidden');
   $('#tabs').classList.add('hidden'); $('#who').classList.add('hidden');
   $$('main > section').forEach(function (s) { s.classList.toggle('hidden', s.id !== 'p-login'); });
   $('#loginErr').classList.toggle('hidden', !err);
@@ -101,6 +102,7 @@ function connect(key) {
   S.key = key;
   return call('admin_list').then(function (j) {
     applyList(j);
+    $('#boot').classList.add('hidden');
     store('quizAdminKey', key);                  // 玩家頁的「預覽」也會用到它
     $('#whoText').textContent = '👤 已登入';
     $('#tabs').classList.remove('hidden'); $('#who').classList.remove('hidden');
@@ -669,8 +671,17 @@ $('#resAuto').onchange = function () {
 // =====================================================================
 (function init() {
   var saved = store('quizAdminKey');
-  if (saved) connect(saved).catch(function (e) { store('quizAdminKey', null); showLogin(e.message); });
-  else showLogin();
+  if (!saved) return showLogin();
+  connect(saved).catch(function (e) {
+    if (e.code === 'forbidden') {                // 密碼確實錯了（例如被換掉）：才清除記住的密碼
+      store('quizAdminKey', null);
+      showLogin('管理密碼已失效，請重新輸入。');
+    } else {                                     // 網路不穩、後端剛好慢等暫時性問題：保留密碼，讓使用者按一下重試
+      S.key = '';
+      $('#inKey').value = saved;
+      showLogin(e.message + '（已幫你保留密碼，按「登入」重試即可）');
+    }
+  });
 })();
 
 })();
