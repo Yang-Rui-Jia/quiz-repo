@@ -34,6 +34,8 @@ const MSG_SCORE = (score, total) => '您已完成作答，成績：' + score + '
 const MSG_NOT_FOUND = '找不到您的作答紀錄。請先掃描 QRCode 完成測驗，作答後再查詢成績。';
 const MAX_RESULT_ROWS = 5000;
 const QUIZ_CACHE_SECONDS = 21600;
+const TOKEN_CACHE_SECONDS = 300;
+const DONE_CACHE_SECONDS = 3600;
 
 // 第一次 setup() 時放進去的範例資料（只有在「題庫」「測驗」是空的時候才會放）
 const SEED = {"categories":{"低硬度岩石":["石灰岩","頁岩","砂岩","泥岩","板岩","白雲岩","礫岩","凝灰岩"],"常見酒類":["啤酒","紅酒","白酒","清酒","威士忌","伏特加","高粱酒","琴酒","白蘭地","龍舌蘭"],"高硬度岩石":["花崗岩","石英岩","玄武岩","輝長岩","片麻岩","角閃岩","安山岩","流紋岩"]},"quiz":{"quizId":"demo","title":"示範測驗：岩石與酒類","description":"這是系統內建的示範測驗，共 10 題。作答完成後按「檢視作答總覽」確認，再送出即可看到成績。","allowRetake":true,"questions":[{"id":"q1","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"花崗岩","optionCount":5,"options":["流紋岩","輝長岩","角閃岩","玄武岩","花崗岩"],"correctIndex":4},{"id":"q2","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"玄武岩","optionCount":5,"options":["玄武岩","花崗岩","流紋岩","角閃岩","石英岩"],"correctIndex":0},{"id":"q3","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"石灰岩","optionCount":5,"options":["頁岩","凝灰岩","砂岩","泥岩","石灰岩"],"correctIndex":4},{"id":"q4","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"頁岩","optionCount":5,"options":["凝灰岩","石灰岩","泥岩","板岩","頁岩"],"correctIndex":4},{"id":"q5","mode":"manual","question":"以下哪種酒精飲料的酒精濃度最低？","options":["啤酒","威士忌","琴酒","高粱酒","伏特加"],"correctIndex":0},{"id":"q6","mode":"auto","question":"請選出正確答案","category":"常見酒類","answer":"清酒","optionCount":5,"options":["高粱酒","清酒","威士忌","白蘭地","啤酒"],"correctIndex":1},{"id":"q7","mode":"manual","question":"下列哪一種岩石屬於火成岩？","options":["石灰岩","花崗岩","大理岩","板岩","砂岩"],"correctIndex":1},{"id":"q8","mode":"manual","question":"下列哪一種岩石屬於沉積岩？","options":["玄武岩","砂岩","石英岩","片麻岩","安山岩"],"correctIndex":1},{"id":"q9","mode":"manual","question":"摩氏硬度表中，硬度最高的礦物是？","options":["螢石","滑石","方解石","石英","鑽石"],"correctIndex":4},{"id":"q10","mode":"manual","question":"威士忌的主要原料是？","options":["甘蔗","龍舌蘭","葡萄","穀物","馬鈴薯"],"correctIndex":3}]}};
@@ -91,9 +93,22 @@ function actionStart_(b) {
     return { ok: true, submitted: false, quiz: pub, preview: true };
   }
   const user = verifyUser_(b.token);
-  const rec = findLatest_(user.userId, quizId);
-  if (rec && !quiz.allowRetake) return { ok: true, submitted: true, score: rec.score, total: rec.total };
+  if (!quiz.allowRetake) {                       // 允許重考的測驗根本不用查紀錄，省下掃描整張表的時間
+    const rec = findDone_(user.userId, quizId);
+    if (rec) return { ok: true, submitted: true, score: rec.score, total: rec.total };
+  }
   return { ok: true, submitted: false, quiz: pub };
+}
+
+/** 這個人在這場「限一次」測驗有沒有作答過。先看快取，沒有才掃 Sheet（掃到了再記進快取）。 */
+function findDone_(userId, quizId) {
+  const cache = CacheService.getScriptCache();
+  const key = 'done:' + quizId + ':' + userId;
+  const hit = cache.get(key);
+  if (hit) return JSON.parse(hit);
+  const rec = findLatest_(userId, quizId);
+  if (rec) cache.put(key, JSON.stringify({ score: rec.score, total: rec.total }), DONE_CACHE_SECONDS);
+  return rec;
 }
 
 /** 給玩家的題目：只有題目與選項，沒有正解、類別。 */
@@ -119,22 +134,31 @@ function actionSubmit_(b) {
   }
   const user = verifyUser_(b.token);
   const sid = String(b.submissionId || '').slice(0, 64);
+  const cache = CacheService.getScriptCache();
+  const result = { score: r.score, total: r.total };
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    const existing = findLatest_(user.userId, quizId);
-    if (existing && sid && existing.sid === sid) {            // 同一次送出重送（網路重試）
-      return { ok: true, score: existing.score, total: existing.total };
-    }
-    if (existing && !quiz.allowRetake) {
-      return { ok: false, error: 'duplicate', score: existing.score, total: existing.total };
-    }
-    resultsSheet_().appendRow([new Date(), quizId, user.userId, user.displayName, r.score, r.total,
-      JSON.stringify(r.answers).slice(0, 45000), sid]);
-  } finally {
-    lock.releaseLock();
+  // 同一次送出重送（網路重試）：直接回上次的結果，不重複寫入
+  if (sid) {
+    const prev = cache.get('sid:' + sid);
+    if (prev) return Object.assign({ ok: true }, JSON.parse(prev));
   }
+
+  const row = [new Date(), quizId, user.userId, user.displayName, r.score, r.total,
+    JSON.stringify(r.answers).slice(0, 45000), sid];
+
+  if (quiz.allowRetake) {
+    resultsSheet_().appendRow(row);              // 允許重考：不用上鎖、不用掃描整張表，多人同時送出也不會排隊
+  } else {
+    // 每人限一次：要上鎖，避免同一個人在兩支手機同時送出。鎖裡只做最少的事。
+    const existing = withLock_(function () {
+      const rec = findDone_(user.userId, quizId);
+      if (!rec) resultsSheet_().appendRow(row);
+      return rec;
+    });
+    if (existing) return { ok: false, error: 'duplicate', score: existing.score, total: existing.total };
+    cache.put('done:' + quizId + ':' + user.userId, JSON.stringify(result), DONE_CACHE_SECONDS);
+  }
+  if (sid) cache.put('sid:' + sid, JSON.stringify(result), QUIZ_CACHE_SECONDS);
   return { ok: true, score: r.score, total: r.total };
 }
 
@@ -381,13 +405,22 @@ function withLock_(fn) {
 // ===== 工具 =====
 function verifyUser_(accessToken) {
   if (!accessToken) throw new Error('missing_token');
+  // 同一位玩家「進場」和「送出」會各驗證一次；驗證過的結果快取 5 分鐘，省下一趟往返 LINE 的時間。
+  // 快取的 key 是 token 的雜湊值，不會把 token 本身存進去。
+  const cache = CacheService.getScriptCache();
+  const ck = 'tok:' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, accessToken));
+  const hit = cache.get(ck);
+  if (hit) return JSON.parse(hit);
+
   const res = UrlFetchApp.fetch('https://api.line.me/v2/profile', {
     headers: { Authorization: 'Bearer ' + accessToken },
     muteHttpExceptions: true
   });
   if (res.getResponseCode() !== 200) throw new Error('invalid_token');
   const p = JSON.parse(res.getContentText());
-  return { userId: p.userId, displayName: p.displayName || '' };
+  const user = { userId: p.userId, displayName: p.displayName || '' };
+  cache.put(ck, JSON.stringify(user), TOKEN_CACHE_SECONDS);
+  return user;
 }
 
 /** 管理密碼錯誤或沒設定一律拒絕；錯誤時故意延遲，拖慢暴力猜測。 */

@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>現場互動測驗</title>
+<!-- 提前跟後端建立連線（省下第一次呼叫的握手時間） -->
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
 <style>
 :root {
   --bg: #f3f6f4;
@@ -188,6 +191,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
   <section id="v-result" class="center hidden">
     <div class="emoji">🎉</div>
     <h1>您已完成作答</h1>
+    <div class="spinner" id="resultSpin" style="margin:14px auto 0;width:28px;height:28px;border-width:3px"></div>
     <div class="score" id="resultScore"></div>
     <div class="status" id="saveStatus"></div>
     <div class="stack">
@@ -329,24 +333,25 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
       $('loadingText').textContent = '連線 LINE…';
       return liff.init({ liffId: cfg.liffId }).then(function () {
         if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return new Promise(function () {}); }
-        return liff.getProfile().then(function (p) {
-          state.userId = p.userId; state.name = p.displayName;
-          state.token = liff.getAccessToken();
-        });
+        state.token = liff.getAccessToken();   // 後端會自己用它向 LINE 驗證身分，不必等個人資料
       });
     }).then(function () {
       state.quizId = getQuizId();
       if (!/^[A-Za-z0-9_-]{1,60}$/.test(state.quizId)) throw new Error('網址缺少測驗代碼，請重新掃描 QRCode。');
-      return checkFriend();
-    }).then(function (ok) {
-      if (!ok) return;
       $('loadingText').textContent = '載入測驗…';
-      return api({ action: 'start', quizId: state.quizId }).then(function (r) {
-        if (!r.ok) throw new Error(explainError(r.error));
-        if (r.submitted) return showDone(r.score, r.total);
-        state.quiz = r.quiz;
-        startQuiz();
-      });
+      // 三件事同時進行（原本是一件接一件）：向後端要題目、取得個人資料、檢查是否已加好友
+      var startP = api({ action: 'start', quizId: state.quizId });
+      var profileP = SIM ? Promise.resolve() : liff.getProfile().then(function (p) {
+        state.userId = p.userId; state.name = p.displayName;
+      }).catch(function (e) { console.warn('getProfile failed:', e); state.userId = 'unknown'; });
+      return Promise.all([startP, profileP, checkFriend()]);
+    }).then(function (res) {
+      var r = res[0], isFriend = res[2];
+      if (!isFriend) return;                     // 已顯示「先加入好友」畫面
+      if (!r.ok) throw new Error(explainError(r.error));
+      if (r.submitted) return showDone(r.score, r.total);
+      state.quiz = r.quiz;
+      startQuiz();
     }).catch(fail);
   }
 
@@ -485,6 +490,7 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
   }
 
   function setScore(score, total) {
+    $('resultSpin').classList.add('hidden');
     state.score = score; state.total = total;
     $('resultScore').innerHTML = '成績：' + esc(score) + '<small> / ' + esc(total) + '</small>';
   }
@@ -492,7 +498,8 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
   // 成績由後端比對正解後回傳（正解不在手機上）
   function saveResult() {
     var status = $('saveStatus');
-    $('resultScore').textContent = '計算成績中…';
+    $('resultScore').innerHTML = '<small>計算成績中…</small>';
+    $('resultSpin').classList.remove('hidden');
     status.className = 'status'; status.textContent = '正在送出答案…';
     $('btnRetrySave').classList.add('hidden');
     api({ action: 'submit', quizId: state.quizId, picks: state.answers, submissionId: state.sid })
@@ -504,7 +511,8 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
         }
         throw new Error(explainError(r.error));
       }).catch(function (e) {
-        $('resultScore').textContent = '尚未取得成績';
+        $('resultSpin').classList.add('hidden');
+        $('resultScore').innerHTML = '<small>尚未取得成績</small>';
         status.className = 'status err';
         status.textContent = '⚠️ 送出失敗：' + e.message;
         $('btnRetrySave').classList.remove('hidden');
