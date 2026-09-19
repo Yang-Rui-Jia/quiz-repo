@@ -13,7 +13,7 @@ window.APP_CONFIG = {
   liffId: "2011670857-3KSWiVfK",
 
   // 後端（Cloudflare Worker）的網址，例如 "https://quiz-api.你的名稱.workers.dev"
-  apiUrl: "",
+  apiUrl: "https://quiz-api.gary410065.workers.dev",
 
   // 舊版後端（Google Apps Script）的網址。只有 apiUrl 留空時才會用到；換到 Cloudflare 之後可以刪掉這行。
   gasUrl: "https://script.google.com/macros/s/AKfycbyaZFLNaqWJzQ5nIC_qsb2W6WpN6pWy5k01HvNuH_EJRwOzbwnQOZAsPbSYJBivxx5S/exec",

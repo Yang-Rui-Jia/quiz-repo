@@ -457,7 +457,7 @@ function safeParse(s, fallback) {
 
 function fmtTime(iso) {
   const d = new Date(iso);
-  return isNaN(d) ? String(iso) : d.toLocaleString('sv-SE', { timeZone: TZ });   // 2026-09-19 20:15:30
+  return isNaN(d.getTime()) ? String(iso) : d.toLocaleString('sv-SE', { timeZone: TZ });   // 2026-09-19 20:15:30
 }
 
 /** 長度相同時逐字元比對，不會因為第幾個字不同而回應時間不同。 */
