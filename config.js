@@ -13,7 +13,7 @@ window.APP_CONFIG = {
   liffId: "2011670857-3KSWiVfK",
 
   // Google Apps Script 網頁應用程式網址：部署後取得，結尾是 /exec
-  gasUrl: "",
+  gasUrl: "https://script.google.com/macros/s/AKfycbyaZFLNaqWJzQ5nIC_qsb2W6WpN6pWy5k01HvNuH_EJRwOzbwnQOZAsPbSYJBivxx5S/exec",
 
   // LINE 官方帳號的 Basic ID（要含 @），例如 "@123abcde"
   // 在 LINE Official Account Manager 左上角、或「設定 → 帳號設定」可以看到
