@@ -332,7 +332,7 @@ function rollAuto(q) {
 
 function renderQuestions() {
   var qs = S.ed.data.questions;
-  $('#qCount').textContent = qs.length + ' 題' + (qs.length === 10 ? ' ✓' : '（建議 10 題）');
+  $('#qCount').textContent = qs.length + ' 題';
   $('#qList').innerHTML = qs.map(function (q, i) { return qHtml(q, i, qs.length); }).join('') ||
     '<div class="card"><p class="sub" style="margin:0">還沒有題目，按下方按鈕新增。</p></div>';
   // 自動題需要類別內容：沒載入的補載入後重畫
@@ -497,8 +497,6 @@ $('#btnEdSave').onclick = function () {
     var first = $('#qList .qcard.bad'); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
     return;
   }
-  var warn = r.quiz.questions.length !== 10 ? '目前是 ' + r.quiz.questions.length + ' 題（建議 10 題）。仍要儲存嗎？' : '';
-  if (warn && !confirm(warn)) return;
   busy(btn, function () {
     $('#edStatus').textContent = '儲存中…';
     return call('admin_saveQuiz', { quiz: r.quiz, isNew: S.ed.isNew, baseUpdatedAt: S.ed.updatedAt })
