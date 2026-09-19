@@ -25,7 +25,8 @@
 // ===== 可調整的設定 =====
 const TZ = 'Asia/Taipei';
 const QUERY_KEYWORD = '查詢成績';            // 玩家按鈕預填的關鍵字，要和 play/index.html 一致
-const MSG_SCORE = (score, total) => '您已完成作答，成績：' + score + '/' + total;
+const TOTAL_POINTS = 100;                    // 滿分固定 100 分
+const MSG_SCORE = (score, total) => '您已完成作答，成績：' + fmtNum(score) + '/' + fmtNum(total);
 const MSG_NOT_FOUND = '找不到您的作答紀錄。請先掃描 QRCode 完成測驗，作答後再查詢成績。';
 const MAX_RESULT_ROWS = 5000;
 const QUIZ_TTL_MS = 10 * 1000;               // 題目在記憶體裡快取的時間：後台改題目後，最多這麼久玩家端就會更新
@@ -40,8 +41,7 @@ const CORS = {
 };
 
 // 第一次啟動時放進去的範例資料（只有在「題庫」「測驗」是空的時候才會放）
-const SEED = {"categories":{"低硬度岩石":["石灰岩","頁岩","砂岩","泥岩","板岩","白雲岩","礫岩","凝灰岩"],"常見酒類":["啤酒","紅酒","白酒","清酒","威士忌","伏特加","高粱酒","琴酒","白蘭地","龍舌蘭"],"高硬度岩石":["花崗岩","石英岩","玄武岩","輝長岩","片麻岩","角閃岩","安山岩","流紋岩"]},"quiz":{"quizId":"demo","title":"示範測驗：岩石與酒類","description":"這是系統內建的示範測驗，共 10 題。作答完成後按「檢視作答總覽」確認，再送出即可看到成績。","allowRetake":true,"questions":[{"id":"q1","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"花崗岩","optionCount":5,"options":["流紋岩","輝長岩","角閃岩","玄武岩","花崗岩"],"correctIndex":4},{"id":"q2","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"玄武岩","optionCount":5,"options":["玄武岩","花崗岩","流紋岩","角閃岩","石英岩"],"correctIndex":0},{"id":"q3","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"石灰岩","optionCount":5,"options":["頁岩","凝灰岩","砂岩","泥岩","石灰岩"],"correctIndex":4},{"id":"q4","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"頁岩","optionCount":5,"options":["凝灰岩","石灰岩","泥岩","板岩","頁岩"],"correctIndex":4},{"id":"q5","mode":"manual","question":"以下哪種酒精飲料的酒精濃度最低？","options":["啤酒","威士忌","琴酒","高粱酒","伏特加"],"correctIndex":0},{"id":"q6","mode":"auto","question":"請選出正確答案","category":"常見酒類","answer":"清酒","optionCount":5,"options":["高粱酒","清酒","威士忌","白蘭地","啤酒"],"correctIndex":1},{"id":"q7","mode":"manual","question":"下列哪一種岩石屬於火成岩？","options":["石灰岩","花崗岩","大理岩","板岩","砂岩"],"correctIndex":1},{"id":"q8","mode":"manual","question":"下列哪一種岩石屬於沉積岩？","options":["玄武岩","砂岩","石英岩","片麻岩","安山岩"],"correctIndex":1},{"id":"q9","mode":"manual","question":"摩氏硬度表中，硬度最高的礦物是？","options":["螢石","滑石","方解石","石英","鑽石"],"correctIndex":4},{"id":"q10","mode":"manual","question":"威士忌的主要原料是？","options":["甘蔗","龍舌蘭","葡萄","穀物","馬鈴薯"],"correctIndex":3}]}};
-
+const SEED = {"categories":{"低硬度岩石":["石灰岩","頁岩","砂岩","泥岩","板岩","白雲岩","礫岩","凝灰岩"],"常見酒類":["啤酒","紅酒","白酒","清酒","威士忌","伏特加","高粱酒","琴酒","白蘭地","龍舌蘭"],"高硬度岩石":["花崗岩","石英岩","玄武岩","輝長岩","片麻岩","角閃岩","安山岩","流紋岩"]},"quiz":{"quizId":"demo","title":"示範測驗：岩石與酒類","description":"這是系統內建的示範測驗，共 10 大題、滿分 100 分。第 7 大題有 2 個子題，第 8 大題示範「部分給分」。作答時可用右上角「題目導覽」快速跳題。","allowRetake":true,"closed":false,"scoring":"equal","questions":[{"id":"q1","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q1","mode":"auto","question":"","options":["流紋岩","輝長岩","角閃岩","玄武岩","花崗岩"],"correctIndex":4,"points":10,"category":"高硬度岩石","answer":"花崗岩"}]},{"id":"q2","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q2","mode":"auto","question":"","options":["玄武岩","花崗岩","流紋岩","角閃岩","石英岩"],"correctIndex":0,"points":10,"category":"高硬度岩石","answer":"玄武岩"}]},{"id":"q3","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q3","mode":"auto","question":"","options":["頁岩","凝灰岩","砂岩","泥岩","石灰岩"],"correctIndex":4,"points":10,"category":"低硬度岩石","answer":"石灰岩"}]},{"id":"q4","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q4","mode":"auto","question":"","options":["凝灰岩","石灰岩","泥岩","板岩","頁岩"],"correctIndex":4,"points":10,"category":"低硬度岩石","answer":"頁岩"}]},{"id":"q5","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q5","mode":"manual","question":"以下哪種酒精飲料的酒精濃度最低？","options":["啤酒","威士忌","琴酒","高粱酒","伏特加"],"correctIndex":0,"points":10}]},{"id":"q6","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q6","mode":"auto","question":"","options":["高粱酒","清酒","威士忌","白蘭地","啤酒"],"correctIndex":1,"points":10,"category":"常見酒類","answer":"清酒"}]},{"id":"q7","title":"岩石分類：請回答下面兩個小題","multi":true,"subScoring":"equal","points":10,"items":[{"id":"q7-1","mode":"manual","question":"下列哪一種岩石屬於火成岩？","options":["石灰岩","花崗岩","大理岩","板岩","砂岩"],"correctIndex":1,"points":5},{"id":"q7-2","mode":"manual","question":"下列哪一種岩石屬於沉積岩？","options":["玄武岩","砂岩","石英岩","片麻岩","安山岩"],"correctIndex":1,"points":5}]},{"id":"q8","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q8","mode":"manual","question":"摩氏硬度表中，硬度最高的礦物是？","options":["螢石","滑石","方解石","石英","鑽石"],"correctIndex":4,"points":10,"partial":[0.3,0,0.3,0.5,1]}]},{"id":"q9","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q9","mode":"manual","question":"威士忌的主要原料是？","options":["甘蔗","龍舌蘭","葡萄","穀物","馬鈴薯"],"correctIndex":3,"points":10}]},{"id":"q10","title":"","multi":false,"subScoring":"equal","points":10,"items":[{"id":"q10","mode":"auto","question":"","options":["石英岩","安山岩","輝長岩","角閃岩","玄武岩"],"correctIndex":2,"points":10,"category":"高硬度岩石","answer":"輝長岩"}]}]}};
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY, items TEXT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS quizzes (quiz_id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)',
@@ -105,6 +105,40 @@ function json(obj) {
   return new Response(JSON.stringify(obj), { headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, CORS) });
 }
 
+// ===== 配分工具 =====
+function round1(n) { return Math.round(n * 10) / 10; }
+function round2(n) { return Math.round(n * 100) / 100; }
+/** 顯示用：33.4 → "33.4"，10 → "10"（最多兩位小數，不補 0） */
+function fmtNum(n) { return String(round2(Number(n) || 0)); }
+
+/** 把 total 平均分給 n 份，每份到小數第一位；除不盡的零頭（0.1）從前面幾份補，這樣加起來剛好等於 total。 */
+function distribute(total, n) {
+  const T = Math.round(total * 10), base = Math.floor(T / n), rem = T - base * n;
+  return Array.from({ length: n }, function (_, i) { return (base + (i < rem ? 1 : 0)) / 10; });
+}
+
+/** 舊格式（每題直接有 options）轉成新格式（大題 → 子題）。新格式原樣回傳。 */
+function normalizeQuiz(q) {
+  const qs = Array.isArray(q.questions) ? q.questions : [];
+  if (!qs.some(function (x) { return x && !Array.isArray(x.items); })) return q;
+  const pts = distribute(TOTAL_POINTS, qs.length || 1);
+  return Object.assign({}, q, {
+    scoring: 'equal',
+    questions: qs.map(function (x, i) {
+      if (Array.isArray(x.items)) return x;
+      const id = x.id || 'q' + (i + 1);
+      return { id: id, title: '', multi: false, subScoring: 'equal', points: pts[i],
+        items: [Object.assign({}, x, { id: id, points: pts[i] })] };
+    })
+  });
+}
+
+function flatItems(quiz) {
+  const out = [];
+  quiz.questions.forEach(function (Q) { Q.items.forEach(function (it) { out.push(it); }); });
+  return out;
+}
+
 // ===== 玩家：進場（查重 + 取題目） =====
 async function actionStart(b, env) {
   const quizId = cleanQuizId(b.quizId);
@@ -127,15 +161,19 @@ async function actionStart(b, env) {
   return { ok: true, submitted: false, quiz: publicQuiz(quiz) };
 }
 
-/** 給玩家的題目：只有題目與選項，沒有正解、類別。 */
+/** 給玩家的題目：只有題目、選項與配分，沒有正解、部分給分、類別。 */
 function publicQuiz(q) {
   return {
     quizId: q.quizId,
     title: q.title,
     description: q.description || '',
-    questions: q.questions.map(function (x) { return { id: x.id, question: x.question, options: x.options }; })
+    questions: q.questions.map(function (Q) {
+      return { id: Q.id, title: Q.title || '', multi: !!Q.multi, points: Q.points,
+        items: Q.items.map(function (it) { return { id: it.id, question: it.question || '', options: it.options, points: it.points }; }) };
+    })
   };
 }
+
 
 // ===== 玩家：送出答案（後端算分） =====
 async function actionSubmit(b, env) {
@@ -184,17 +222,20 @@ async function actionSubmit(b, env) {
 }
 
 function score(quiz, picks) {
-  if (!Array.isArray(picks) || picks.length !== quiz.questions.length) throw new Error('bad_answers');
-  let s = 0;
-  const answers = quiz.questions.map(function (q, i) {
+  const items = flatItems(quiz);
+  if (!Array.isArray(picks) || picks.length !== items.length) throw new Error('bad_answers');
+  let earnedTotal = 0, maxTotal = 0;
+  const answers = items.map(function (it, i) {
     const p = Number(picks[i]);
-    const pick = Number.isInteger(p) && p >= 0 && p < q.options.length ? p : -1;
-    const ok = pick === q.correctIndex;
-    if (ok) s++;
-    return { id: q.id, pick: pick, text: pick >= 0 ? q.options[pick] : '', ok: ok };
+    const pick = Number.isInteger(p) && p >= 0 && p < it.options.length ? p : -1;
+    const ratio = pick < 0 ? 0 : (it.partial ? it.partial[pick] : (pick === it.correctIndex ? 1 : 0));
+    const earned = round2(it.points * ratio);
+    earnedTotal += earned; maxTotal += it.points;
+    return { id: it.id, pick: pick, text: pick >= 0 ? it.options[pick] : '', earned: earned, max: it.points, ok: earned >= it.points - 0.001 };
   });
-  return { score: s, total: quiz.questions.length, answers: answers };
+  return { score: round2(earnedTotal), total: round2(maxTotal), answers: answers };
 }
+
 
 // ===== Webhook：免費回覆成績 =====
 async function handleWebhook(request, raw, body, env, ctx) {
@@ -261,7 +302,7 @@ async function adminList(b, env) {
   const quizzes = [];
   out[1].results.forEach(function (r) {
     const q = safeParse(r.json, null);
-    if (q) { q.updatedAt = r.updated_at; quizzes.push(q); }
+    if (q) { const n = normalizeQuiz(q); n.updatedAt = r.updated_at; quizzes.push(n); }
   });
   return { ok: true, categories: categories, quizzes: quizzes };
 }
@@ -363,24 +404,70 @@ async function actionResults(b, env) {
   return { ok: true, quizIds: quizIds, rows: rows };
 }
 
-/** 驗證並整理管理者送來的測驗；只保留我們定義的欄位。 */
-function cleanQuiz(q) {
+/** 驗證並整理管理者送來的測驗；只保留我們定義的欄位。舊格式會先轉成新格式。 */
+function cleanQuiz(input) {
+  const q = normalizeQuiz(input || {});
   const quizId = cleanQuizId(q.quizId);
   const title = str(q.title, 100);
   if (!title) throw new Error('missing_title');
   if (!Array.isArray(q.questions) || !q.questions.length || q.questions.length > 100) throw new Error('bad_questions');
-  const questions = q.questions.map(function (x, i) {
-    const options = Array.isArray(x.options) ? x.options.map(function (o) { return str(o, 200); }) : [];
-    if (options.length < 2 || options.length > 10 || options.some(function (o) { return !o; })) throw new Error('bad_options_q' + (i + 1));
-    const ci = Number(x.correctIndex);
-    if (!Number.isInteger(ci) || ci < 0 || ci >= options.length) throw new Error('bad_correct_q' + (i + 1));
-    const out = { id: 'q' + (i + 1), mode: x.mode === 'auto' ? 'auto' : 'manual', question: str(x.question, 500), options: options, correctIndex: ci };
-    if (out.mode === 'auto') { out.category = str(x.category, 60); out.answer = str(x.answer, 200); }
-    else if (!out.question) throw new Error('missing_question_q' + (i + 1));
-    return out;
+  const scoring = q.scoring === 'custom' ? 'custom' : 'equal';
+  const equalPts = distribute(TOTAL_POINTS, q.questions.length);
+  let totalItems = 0, sum = 0;
+
+  const questions = q.questions.map(function (Q, i) {
+    const n = i + 1;
+    const raw = Array.isArray(Q.items) ? Q.items : [];
+    const multi = !!Q.multi;
+    if (!raw.length || raw.length > 20 || (!multi && raw.length !== 1)) throw new Error('bad_items_q' + n);
+    totalItems += raw.length;
+
+    const points = scoring === 'equal' ? equalPts[i] : round1(Number(Q.points));
+    if (!(points > 0) || points > TOTAL_POINTS) throw new Error('bad_points_q' + n);
+    sum += points;
+
+    const subScoring = multi && Q.subScoring === 'custom' ? 'custom' : 'equal';
+    let itemPts;
+    if (!multi) itemPts = [points];
+    else if (subScoring === 'equal') {
+      itemPts = distribute(points, raw.length);
+      if (itemPts.some(function (p) { return !(p > 0); })) throw new Error('bad_points_q' + n);      // 配分太少，平均後有子題拿到 0 分
+    } else {
+      itemPts = raw.map(function (x) { return round1(Number(x.points)); });
+      if (itemPts.some(function (p) { return !(p > 0); })) throw new Error('bad_points_q' + n);
+      if (Math.abs(itemPts.reduce(function (a, b) { return a + b; }, 0) - points) > 0.05) throw new Error('bad_subsum_q' + n);
+    }
+
+    const items = raw.map(function (x, j) {
+      const label = multi ? n + '_' + (j + 1) : String(n);            // 錯誤代碼用，例如 q2_3 = 第 2 大題第 3 子題
+      const options = Array.isArray(x.options) ? x.options.map(function (o) { return str(o, 200); }) : [];
+      if (options.length < 2 || options.length > 10 || options.some(function (o) { return !o; })) throw new Error('bad_options_q' + label);
+      let correctIndex = Number(x.correctIndex);
+      let partial;
+      if (Array.isArray(x.partial)) {
+        // 部分給分：每個選項拿題目配分的幾成（0～1），至少要有一個選項拿滿分
+        if (x.partial.length !== options.length) throw new Error('bad_partial_q' + label);
+        partial = x.partial.map(function (r) { return Math.round(Number(r) * 1e6) / 1e6; });
+        if (partial.some(function (r) { return !(r >= 0 && r <= 1); })) throw new Error('bad_partial_q' + label);
+        const best = Math.max.apply(null, partial);
+        if (best < 0.999999) throw new Error('no_full_option_q' + label);
+        correctIndex = partial.indexOf(best);
+      }
+      if (!Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex >= options.length) throw new Error('bad_correct_q' + label);
+      const out = { id: multi ? 'q' + n + '-' + (j + 1) : 'q' + n, mode: x.mode === 'auto' ? 'auto' : 'manual',
+        question: str(x.question, 500), options: options, correctIndex: correctIndex, points: itemPts[j] };
+      if (partial) out.partial = partial;
+      if (out.mode === 'auto') { out.category = str(x.category, 60); out.answer = str(x.answer, 200); }
+      return out;
+    });
+    return { id: 'q' + n, title: multi ? str(Q.title, 500) : '', multi: multi, subScoring: subScoring, points: points, items: items };
   });
-  return { quizId: quizId, title: title, description: str(q.description, 500), allowRetake: !!q.allowRetake, closed: !!q.closed, questions: questions };
+
+  if (totalItems > 200) throw new Error('bad_questions');
+  if (scoring === 'custom' && Math.abs(sum - TOTAL_POINTS) > 0.05) throw new Error('bad_total');
+  return { quizId: quizId, title: title, description: str(q.description, 500), allowRetake: !!q.allowRetake, closed: !!q.closed, scoring: scoring, questions: questions };
 }
+
 
 // ===== 資料存取 =====
 async function getQuiz(env, quizId) {
@@ -388,7 +475,7 @@ async function getQuiz(env, quizId) {
   if (hit && hit.exp > Date.now()) return hit.quiz;
   const row = await env.DB.prepare('SELECT json FROM quizzes WHERE quiz_id = ?').bind(quizId).first();
   if (!row) { quizCache.delete(quizId); return null; }
-  const quiz = JSON.parse(row.json);
+  const quiz = normalizeQuiz(JSON.parse(row.json));
   quizCache.set(quizId, { quiz: quiz, exp: Date.now() + QUIZ_TTL_MS });
   return quiz;
 }

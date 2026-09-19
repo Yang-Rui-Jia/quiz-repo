@@ -19,7 +19,7 @@
 ├── index.html            首頁（連結到後台）
 ├── config.js             全站設定（LIFF ID、後端網址 apiUrl、官方帳號 ID）← 擁有者填一次
 ├── play/index.html       玩家答題頁（LIFF）
-│   └ sample-quiz.json    只給「?mock=1 測試模式」用的內建示範題目
+│   └ sample-quiz.json    只給「?mock=1 測試模式」用的內建示範題目（新格式：大題 → 子題、含配分）
 ├── admin/                管理後台：題庫、測驗編輯、QRCode、結果統計
 ├── worker/index.js       後端（Cloudflare Worker + D1）= API + LINE webhook
 ├── gas/Code.gs           舊版後端（Google Apps Script），已被 worker/ 取代，僅留作備份
@@ -53,3 +53,4 @@
 | Webhook | 未規劃 | 有設 Channel secret 時驗證 LINE 簽章 | 確認請求真的來自 LINE |
 | 「已作答」被擋 | 待決定 | 顯示上次成績 + 「請洽現場工作人員」 | 見規格第 10 節 |
 | 送出網路重試 | 未規劃 | 每次送出帶 submissionId，資料庫唯一索引去重 | 網路不穩重送不會重複記錄 |
+| 題目結構與配分 | 一題一答、每題等分 | **大題 → 子題**；滿分固定 100，可平均分配（到小數第一位）或自訂；每個選項可設部分給分 | 出題彈性：子題各自配分、特殊題可有部分分數。玩家一次看一個大題，可用「題目導覽」跳題 |

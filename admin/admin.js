@@ -45,13 +45,20 @@ var ERR = {
   not_found: '找不到這筆資料，可能已經被刪除。請重新整理頁面確認',
   quiz_closed: '這場測驗已經關閉',
   bad_category_name: '類別名稱不合法',
-  bad_category_items: '類別清單是空的，或超過 300 項'
+  bad_category_items: '類別清單是空的，或超過 300 項',
+  bad_questions: '題目數量不正確（至少 1 大題）',
+  bad_total: '各大題配分加總必須剛好 100 分'
 };
 function errText(code) {
   code = String(code || '');
   if (ERR[code]) return ERR[code];
-  var m = code.match(/^(bad_options|bad_correct|missing_question)_q(\d+)$/);
-  if (m) return '第 ' + m[2] + ' 題有問題：' + { bad_options: '選項不完整', bad_correct: '沒有選定正解', missing_question: '沒有題目文字' }[m[1]];
+  var m = code.match(/^(bad_options|bad_correct|bad_partial|no_full_option|bad_points|bad_subsum|bad_items)_q(\d+)(?:_(\d+))?$/);
+  if (m) {
+    return '第 ' + m[2] + ' 大題' + (m[3] ? '第 ' + m[3] + ' 子題' : '') + '有問題：' + {
+      bad_options: '選項不完整', bad_correct: '沒有選定正解', bad_partial: '部分給分的設定不正確',
+      no_full_option: '部分給分時，至少要有一個選項拿滿分', bad_points: '配分不正確', bad_subsum: '子題配分加總必須等於大題配分', bad_items: '子題數量不正確'
+    }[m[1]];
+  }
   return '伺服器回應：' + code;
 }
 function apiUrl() { return cfg.apiUrl || cfg.gasUrl || ''; }   // 新後端(Cloudflare)用 apiUrl；舊的 gasUrl 只是相容
@@ -255,7 +262,7 @@ function renderQuizList() {
   $('#quizList').innerHTML = S.quizzes.map(function (q) {
     var d = q.data;
     return '<div class="card"><div class="qrow"><div class="t"><b>' + esc(d.title || q.id) + '</b>' +
-      '<div><span class="mono">' + esc(q.id) + '</span>　' + (d.questions || []).length + ' 題　' +
+      '<div><span class="mono">' + esc(q.id) + '</span>　' + countText(d) + '　' +
       (d.allowRetake ? '<span class="badge a">可重複作答</span>' : '<span class="badge g">每人限一次</span>') +
       (d.closed ? '　<span class="badge r">🔒 已關閉</span>' : '') + '</div></div>' +
       '<button class="btn sm" data-act="toggle" data-id="' + esc(q.id) + '">' + (d.closed ? '重新開放' : '關閉作答') + '</button>' +
@@ -264,6 +271,12 @@ function renderQuizList() {
       '<button class="btn sm" data-act="copy" data-id="' + esc(q.id) + '">複製</button>' +
       '<button class="btn sm danger" data-act="del" data-id="' + esc(q.id) + '">刪除</button></div></div>';
   }).join('') || '<div class="card"><p class="sub" style="margin:0">還沒有任何測驗。按右上角「建立新測驗」開始。</p></div>';
+}
+
+function countText(d) {
+  var qs = d.questions || [], items = 0;
+  qs.forEach(function (Q) { items += Array.isArray(Q.items) ? Q.items.length : 1; });
+  return qs.length + ' 大題' + (items !== qs.length ? '（共 ' + items + ' 個小題）' : '') + '・滿分 100';
 }
 
 function findQuiz(id) { return S.quizzes.filter(function (q) { return q.id === id; })[0]; }
@@ -305,16 +318,106 @@ function newQuizId() {
   return 'quiz-' + String(d.getFullYear()).slice(2) + p(d.getMonth() + 1) + p(d.getDate()) + '-' + Math.random().toString(36).slice(2, 5);
 }
 $('#btnNewQuiz').onclick = function () {
-  openEditor(true, { id: newQuizId(), updatedAt: '', data: { title: '', description: '', allowRetake: false, questions: [] } });
+  openEditor(true, { id: newQuizId(), updatedAt: '', data: { title: '', description: '', allowRetake: false, scoring: 'equal', questions: [] } });
 };
 
 // =====================================================================
 //  測驗編輯器
+//  一份測驗 = 多個「大題」；大題可以有「子題」。滿分固定 100 分。
+//  編輯中的資料形狀（S.ed.data）：
+//    { title, description, allowRetake, closed, scoring:'equal'|'custom',
+//      questions:[ { title, multi, subScoring:'equal'|'custom', points,
+//        items:[ { mode, question, options[], correctIndex, points, partialOn, partialPts[], category?, answer?, optionCount? } ] } ] }
+//  儲存時才轉成後端的格式（部分給分：每個選項拿題目配分的幾成）。
 // =====================================================================
+var TOTAL = 100;
+function round1(n) { return Math.round(n * 10) / 10; }
+function round2(n) { return Math.round(n * 100) / 100; }
+function pnum(x) { return typeof x === 'number' && isFinite(x) ? round1(x) : NaN; }   // 使用者輸入的配分：到小數第一位
+function fmt(n) { n = Number(n); return isFinite(n) ? String(round2(n)) : '?'; }
+/** 把 total 平均分給 n 份（到小數第一位；零頭 0.1 從前面補），加起來剛好 = total */
+function distribute(total, n) {
+  var out = [];
+  if (!(n >= 1) || !(total > 0)) { for (var z = 0; z < n; z++) out.push(NaN); return out; }
+  var T = Math.round(total * 10), base = Math.floor(T / n), rem = T - base * n;
+  for (var i = 0; i < n; i++) out.push((base + (i < rem ? 1 : 0)) / 10);
+  return out;
+}
+
+/** 後端的測驗 → 編輯用的資料（舊格式：每題直接有 options，也能讀） */
+function toEditor(d) {
+  var qs = (d.questions || []).map(function (Q) {
+    var hasItems = Array.isArray(Q.items);
+    var raw = hasItems ? Q.items : [Q];
+    var multi = hasItems && !!Q.multi;
+    return {
+      title: multi ? (Q.title || '') : '', multi: multi,
+      subScoring: Q.subScoring === 'custom' ? 'custom' : 'equal',
+      points: typeof Q.points === 'number' ? Q.points : null,
+      items: raw.map(function (I) {
+        var options = (I.options || []).slice();
+        var it = { mode: I.mode === 'auto' ? 'auto' : 'manual', question: I.question || '', options: options,
+          correctIndex: typeof I.correctIndex === 'number' ? I.correctIndex : -1,
+          points: typeof I.points === 'number' ? I.points : null,
+          partialOn: Array.isArray(I.partial),
+          partialPts: options.map(function () { return 0; }) };
+        if (Array.isArray(I.partial) && typeof I.points === 'number') it.partialPts = I.partial.map(function (r) { return round2(r * I.points); });
+        if (it.mode === 'auto') { it.category = I.category || ''; it.answer = I.answer || ''; it.optionCount = options.length || 5; }
+        return it;
+      })
+    };
+  });
+  return { quizId: d.quizId, title: d.title || '', description: d.description || '', allowRetake: !!d.allowRetake, closed: !!d.closed,
+    scoring: d.scoring === 'custom' ? 'custom' : 'equal', questions: qs };
+}
+
+function newItem(mode) {
+  return mode === 'auto'
+    ? { mode: 'auto', question: '', category: '', answer: '', optionCount: 5, options: [], correctIndex: -1, points: null, partialOn: false, partialPts: [] }
+    : { mode: 'manual', question: '', options: ['', '', '', '', ''], correctIndex: -1, points: null, partialOn: false, partialPts: [0, 0, 0, 0, 0] };
+}
+function newBig(mode) { return { title: '', multi: false, subScoring: 'equal', points: null, items: [newItem(mode)] }; }
+
+// ---- 配分計算（畫面上顯示的分數、驗證都用這幾個函式） ----
+function bigPts(i) {
+  var d = S.ed.data;
+  return d.scoring === 'equal' ? distribute(TOTAL, d.questions.length)[i] : pnum(d.questions[i].points);
+}
+function itemPts(i, j) {
+  var Q = S.ed.data.questions[i], b = bigPts(i);
+  if (!Q.multi) return b;
+  if (Q.subScoring === 'custom') return pnum(Q.items[j].points);
+  return b > 0 ? distribute(b, Q.items.length)[j] : NaN;
+}
+
+function refreshPts() {
+  if (!S.ed) return;
+  var d = S.ed.data;
+  $$('[data-pt]').forEach(function (el) {
+    var k = el.dataset.pt.split('-');
+    el.textContent = fmt(k.length > 1 ? itemPts(+k[0], +k[1]) : bigPts(+k[0]));
+  });
+  $$('[data-subsum]').forEach(function (el) {
+    var i = +el.dataset.subsum, Q = d.questions[i], s = 0, b = bigPts(i);
+    Q.items.forEach(function (it) { var p = pnum(it.points); if (!isNaN(p)) s += p; });
+    var diff = round1(b - s);
+    el.textContent = isNaN(b) ? '請先填這個大題的配分'
+      : '子題合計 ' + fmt(s) + ' / ' + fmt(b) + ' 分' + (diff === 0 ? ' ✓' : diff > 0 ? '（還差 ' + fmt(diff) + ' 分）' : '（超過 ' + fmt(-diff) + ' 分）');
+    el.className = 'badge ' + (diff === 0 ? 'g' : 'r');
+  });
+  var box = $('#scoreSum');
+  if (!d.questions.length) { box.textContent = ''; box.className = 'badge'; return; }
+  if (d.scoring === 'equal') { box.textContent = '滿分 100 分（每大題自動平均分配）'; box.className = 'badge g'; return; }
+  var sum = 0, missing = false;
+  d.questions.forEach(function (Q, i) { var p = bigPts(i); if (isNaN(p)) missing = true; else sum += p; });
+  var diff2 = round1(TOTAL - sum);
+  box.textContent = '目前合計 ' + fmt(sum) + ' / 100 分' + (diff2 === 0 && !missing ? ' ✓' : diff2 > 0 ? '（還差 ' + fmt(diff2) + ' 分）' : diff2 < 0 ? '（超過 ' + fmt(-diff2) + ' 分）' : '');
+  box.className = 'badge ' + (diff2 === 0 && !missing ? 'g' : 'r');
+}
+
 function openEditor(isNew, q) {
-  S.ed = { isNew: isNew, updatedAt: q.updatedAt || '', data: clone(q.data) };
+  S.ed = { isNew: isNew, updatedAt: q.updatedAt || '', data: toEditor(clone(q.data)) };
   S.ed.data.quizId = q.id;
-  S.ed.data.questions = S.ed.data.questions || [];
   S.dirty = false;
   $('#edTitleH').textContent = isNew ? '建立新測驗' : '編輯測驗';
   $('#edTitle').value = S.ed.data.title || '';
@@ -340,124 +443,229 @@ $('#btnEdBack').onclick = function () {
 });
 window.addEventListener('beforeunload', function (e) { if (S.ed && S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
-function newAuto() { return { mode: 'auto', question: '', category: '', answer: '', optionCount: 5, options: [], correctIndex: -1 }; }
-function newManual() { return { mode: 'manual', question: '', options: ['', '', '', '', ''], correctIndex: -1 }; }
+$('#edScoring').onchange = function () {
+  var d = S.ed.data;
+  if (this.value === 'custom') {                 // 切到自訂時，先帶入目前的平均分數，再讓使用者改
+    var ps = distribute(TOTAL, d.questions.length);
+    d.questions.forEach(function (Q, i) { Q.points = isNaN(ps[i]) ? null : ps[i]; });
+  }
+  d.scoring = this.value; S.dirty = true; renderQuestions();
+};
 
-$('#btnAddAuto').onclick = function () { S.ed.data.questions.push(newAuto()); S.dirty = true; renderQuestions(); scrollLast(); };
-$('#btnAddManual').onclick = function () { S.ed.data.questions.push(newManual()); S.dirty = true; renderQuestions(); scrollLast(); };
+$('#btnAddAuto').onclick = function () { S.ed.data.questions.push(newBig('auto')); S.dirty = true; renderQuestions(); scrollLast(); };
+$('#btnAddManual').onclick = function () { S.ed.data.questions.push(newBig('manual')); S.dirty = true; renderQuestions(); scrollLast(); };
 function scrollLast() { var c = $$('#qList .qcard'); if (c.length) c[c.length - 1].scrollIntoView({ block: 'center', behavior: 'smooth' }); }
 
-function rollAuto(q) {
-  var c = S.cats[q.category];
-  if (!c || !q.answer) return;
-  var pool = c.items.filter(function (x) { return x !== q.answer; });
-  var need = q.optionCount - 1;
+function rollAuto(it) {
+  var c = S.cats[it.category];
+  it.partialPts = [];
+  if (!c || !it.answer) return;
+  var pool = c.items.filter(function (x) { return x !== it.answer; });
+  var need = it.optionCount - 1;
   if (pool.length < need) {
-    q.options = []; q.correctIndex = -1;
-    toast('類別「' + q.category + '」扣掉正解後只剩 ' + pool.length + ' 個項目，不夠抽 ' + need + ' 個干擾選項。請減少選項數，或到題庫補充項目。', true);
+    it.options = []; it.correctIndex = -1;
+    toast('類別「' + it.category + '」扣掉正解後只剩 ' + pool.length + ' 個項目，不夠抽 ' + need + ' 個干擾選項。請減少選項數，或到題庫補充項目。', true);
     return;
   }
-  q.options = shuffle([q.answer].concat(shuffle(pool).slice(0, need)));
-  q.correctIndex = q.options.indexOf(q.answer);
+  it.options = shuffle([it.answer].concat(shuffle(pool).slice(0, need)));
+  it.correctIndex = it.options.indexOf(it.answer);
+  it.partialPts = it.options.map(function () { return 0; });
 }
 
 function renderQuestions() {
-  var qs = S.ed.data.questions;
-  $('#qCount').textContent = qs.length + ' 題';
-  $('#qList').innerHTML = qs.map(function (q, i) { return qHtml(q, i, qs.length); }).join('') ||
+  var d = S.ed.data, qs = d.questions;
+  $('#qCount').textContent = qs.length + ' 大題';
+  $('#edScoring').value = d.scoring;
+  $('#qList').innerHTML = qs.map(function (Q, i) { return bigHtml(Q, i, qs.length); }).join('') ||
     '<div class="card"><p class="sub" style="margin:0">還沒有題目，按下方按鈕新增。</p></div>';
+  refreshPts();
   // 自動題需要類別內容：沒載入的補載入後重畫
   var need = {};
-  qs.forEach(function (q) { if (q.mode === 'auto' && q.category && S.cats[q.category] && !S.cats[q.category].loaded && !S.cats[q.category].isNew) need[q.category] = 1; });
+  qs.forEach(function (Q) { Q.items.forEach(function (it) { if (it.mode === 'auto' && it.category && S.cats[it.category] && !S.cats[it.category].loaded && !S.cats[it.category].isNew) need[it.category] = 1; }); });
   var names = Object.keys(need);
   if (names.length) Promise.all(names.map(ensureCat)).then(function () { if (S.ed) renderQuestions(); }).catch(function (e) { toast(e.message, true); });
 }
 
-function qHtml(q, i, n) {
-  var head = '<div class="qcard" data-i="' + i + '"><div class="qhead"><span class="handle" title="拖曳排序">⠿</span><b>第 ' + (i + 1) + ' 題</b>' +
-    '<span class="badge ' + (q.mode === 'auto' ? 'g' : 'a') + '">' + (q.mode === 'auto' ? '自動生成' : '手動輸入') + '</span><span class="sp"></span>' +
+function kindBadge(it) { return '<span class="badge ' + (it.mode === 'auto' ? 'g' : 'a') + '">' + (it.mode === 'auto' ? '自動生成' : '手動輸入') + '</span>'; }
+function numInput(q, val) {
+  return '<input type="number" class="numin" min="0" max="100" step="0.1" data-q="' + q + '" value="' + (val == null || isNaN(val) ? '' : esc(val)) + '">';
+}
+
+function bigHtml(Q, i, n) {
+  var custom = S.ed.data.scoring === 'custom';
+  var pts = custom ? '<label class="pin">配分 ' + numInput('bigpts', Q.points) + ' 分</label>'
+    : '<span class="badge g"><span data-pt="' + i + '"></span> 分</span>';
+  var h = '<div class="qcard" data-i="' + i + '"><div class="qhead"><span class="handle" title="拖曳排序">⠿</span><b>第 ' + (i + 1) + ' 大題</b>' +
+    (Q.multi ? '<span class="badge a">' + Q.items.length + ' 個子題</span>' : kindBadge(Q.items[0])) + pts + '<span class="sp"></span>' +
     '<button class="btn sm" data-act="up"' + (i === 0 ? ' disabled' : '') + '>▲</button>' +
     '<button class="btn sm" data-act="down"' + (i === n - 1 ? ' disabled' : '') + '>▼</button>' +
-    '<button class="btn sm danger" data-act="del">刪除</button></div>';
-  if (q.mode === 'auto') {
-    var cat = S.cats[q.category];
+    '<button class="btn sm danger" data-act="del">刪除</button></div>' +
+    '<label class="chk"><input type="checkbox" data-q="multi"' + (Q.multi ? ' checked' : '') + '> 這題有子題 <small>（大題底下分成幾個小題，各自配分；玩家仍是一頁看完這個大題）</small></label>';
+  if (!Q.multi) return h + itemHtml(Q.items[0], i, 0, false) + '</div>';
+  h += '<label class="f">大題說明 <small>（選填，顯示在子題上方）</small><textarea data-q="bigtitle" rows="2" placeholder="例如：請依照展示的岩石回答下面 3 個小題">' + esc(Q.title) + '</textarea></label>' +
+    '<div class="row" style="margin:0 0 10px"><label class="pin">子題配分 <select data-q="subScoring" class="inl">' +
+    '<option value="equal"' + (Q.subScoring === 'equal' ? ' selected' : '') + '>平均分配</option>' +
+    '<option value="custom"' + (Q.subScoring === 'custom' ? ' selected' : '') + '>自訂</option></select></label>' +
+    (Q.subScoring === 'custom' ? '<span class="badge" data-subsum="' + i + '"></span>' : '') + '</div>';
+  Q.items.forEach(function (it, j) { h += itemHtml(it, i, j, true); });
+  return h + '<div class="row"><button class="btn sm" data-act="addsub" data-mode="auto">＋ 自動生成子題</button>' +
+    '<button class="btn sm" data-act="addsub" data-mode="manual">＋ 手動輸入子題</button></div></div>';
+}
+
+function itemHtml(it, i, j, isSub) {
+  var Q = S.ed.data.questions[i], custom = Q.multi && Q.subScoring === 'custom';
+  var h = '<div class="ibox' + (isSub ? ' scard' : '') + '" data-i="' + i + '" data-j="' + j + '">';
+  if (isSub) {
+    h += '<div class="qhead"><b>(' + (j + 1) + ') 子題</b>' + kindBadge(it) +
+      (custom ? '<label class="pin">配分 ' + numInput('itempts', it.points) + ' 分</label>' : '<span class="badge g"><span data-pt="' + i + '-' + j + '"></span> 分</span>') +
+      '<span class="sp"></span>' +
+      '<button class="btn sm" data-act="subup"' + (j === 0 ? ' disabled' : '') + '>▲</button>' +
+      '<button class="btn sm" data-act="subdown"' + (j === Q.items.length - 1 ? ' disabled' : '') + '>▼</button>' +
+      '<button class="btn sm danger" data-act="delsub">刪除</button></div>';
+  }
+  if (it.mode === 'auto') {
+    var cat = S.cats[it.category];
     var items = cat ? cat.items : [];
-    if (q.answer && items.indexOf(q.answer) < 0) items = [q.answer].concat(items);
+    if (it.answer && items.indexOf(it.answer) < 0) items = [it.answer].concat(items);
     var catOpts = '<option value="">請選擇類別</option>' + S.catNames.map(function (nm) {
-      return '<option value="' + esc(nm) + '"' + (nm === q.category ? ' selected' : '') + '>' + esc(nm) + '</option>';
+      return '<option value="' + esc(nm) + '"' + (nm === it.category ? ' selected' : '') + '>' + esc(nm) + '</option>';
     }).join('');
-    if (q.category && S.catNames.indexOf(q.category) < 0) catOpts += '<option value="' + esc(q.category) + '" selected>' + esc(q.category) + '（已刪除）</option>';
+    if (it.category && S.catNames.indexOf(it.category) < 0) catOpts += '<option value="' + esc(it.category) + '" selected>' + esc(it.category) + '（已刪除）</option>';
     var ansOpts = '<option value="">請選擇正解</option>' + items.map(function (x) {
-      return '<option value="' + esc(x) + '"' + (x === q.answer ? ' selected' : '') + '>' + esc(x) + '</option>';
+      return '<option value="' + esc(x) + '"' + (x === it.answer ? ' selected' : '') + '>' + esc(x) + '</option>';
     }).join('');
-    var cnt = ''; for (var k = 2; k <= MAX_OPTIONS; k++) cnt += '<option' + (k === q.optionCount ? ' selected' : '') + '>' + k + '</option>';
-    var chips = q.options.map(function (o, j) {
-      return '<span class="chip' + (j === q.correctIndex ? ' ok' : '') + '">' + LETTERS[j] + '. ' + esc(o) + (j === q.correctIndex ? ' ✓' : '') + '</span>';
+    var cnt = ''; for (var k = 2; k <= MAX_OPTIONS; k++) cnt += '<option' + (k === it.optionCount ? ' selected' : '') + '>' + k + '</option>';
+    var chips = it.options.map(function (o, m) {
+      return '<span class="chip' + (m === it.correctIndex ? ' ok' : '') + '">' + LETTERS[m] + '. ' + esc(o) + (m === it.correctIndex ? ' ✓' : '') + '</span>';
     }).join('');
-    return head +
-      '<label class="f">題目文字 <small>（選填，留空會顯示「請選出正確答案」）</small><input type="text" data-q="question" value="' + esc(q.question) + '" placeholder="請選出正確答案"></label>' +
+    h += '<label class="f">題目文字 <small>（選填，留空會顯示「請選出正確答案」）</small><input type="text" data-q="question" value="' + esc(it.question) + '" placeholder="請選出正確答案"></label>' +
       '<div class="grid3"><label class="f">類別<select data-q="category">' + catOpts + '</select></label>' +
       '<label class="f">正解<select data-q="answer">' + ansOpts + '</select></label>' +
       '<label class="f">選項數<select data-q="optionCount">' + cnt + '</select></label></div>' +
       '<div class="chips">' + (chips || '<span class="sub">選好類別與正解後，這裡會顯示自動抽出的選項</span>') + '</div>' +
-      '<button class="btn sm" data-act="reroll"' + (q.answer ? '' : ' disabled') + '>🎲 重抽選項</button></div>';
+      '<button class="btn sm" data-act="reroll"' + (it.answer ? '' : ' disabled') + '>🎲 重抽選項</button>';
+  } else {
+    var rows = it.options.map(function (o, m) {
+      return '<div class="orow"><input type="radio" name="c' + i + '_' + j + '" data-act="correct" data-j="' + m + '"' + (m === it.correctIndex ? ' checked' : '') + ' title="設為正解">' +
+        '<b>' + LETTERS[m] + '</b><input type="text" data-q="opt" data-j="' + m + '" value="' + esc(o) + '" placeholder="選項 ' + LETTERS[m] + '">' +
+        '<button class="btn sm" data-act="delopt" data-j="' + m + '"' + (it.options.length <= 2 ? ' disabled' : '') + '>✕</button></div>';
+    }).join('');
+    h += '<label class="f">題目 <small>（選填，留空會顯示「請選出正確答案」；例如題目是看實物或圖片時）</small><textarea data-q="question" rows="2" placeholder="例如：以下哪種酒精飲料的酒精濃度最低？">' + esc(it.question) + '</textarea></label>' +
+      '<div class="sub" style="margin:0 0 4px">選項（點左邊圓點 = 正解）</div>' + rows +
+      '<button class="btn sm" data-act="addopt"' + (it.options.length >= MAX_OPTIONS ? ' disabled' : '') + '>＋ 新增選項</button>';
   }
-  var rows = q.options.map(function (o, j) {
-    return '<div class="orow"><input type="radio" name="c' + i + '" data-act="correct" data-j="' + j + '"' + (j === q.correctIndex ? ' checked' : '') + ' title="設為正解">' +
-      '<b>' + LETTERS[j] + '</b><input type="text" data-q="opt" data-j="' + j + '" value="' + esc(o) + '" placeholder="選項 ' + LETTERS[j] + '">' +
-      '<button class="btn sm" data-act="delopt" data-j="' + j + '"' + (q.options.length <= 2 ? ' disabled' : '') + '>✕</button></div>';
-  }).join('');
-  return head +
-    '<label class="f">題目<textarea data-q="question" rows="2" placeholder="例如：以下哪種酒精飲料的酒精濃度最低？">' + esc(q.question) + '</textarea></label>' +
-    '<div class="sub" style="margin:0 0 4px">選項（點左邊圓點 = 正解）</div>' + rows +
-    '<button class="btn sm" data-act="addopt"' + (q.options.length >= MAX_OPTIONS ? ' disabled' : '') + '>＋ 新增選項</button></div>';
+  return h + partialHtml(it, i, j) + '</div>';
 }
 
-// 題目區事件（委派）
+/** 部分給分：預設只有正解拿滿分；勾選後，其他選項可以各自設定拿幾分 */
+function partialHtml(it, i, j) {
+  if (!it.options.length) return '';
+  var h = '<label class="chk"><input type="checkbox" data-q="partial"' + (it.partialOn ? ' checked' : '') +
+    '> 部分給分 <small>（預設只有正解拿分。勾選後，特定的錯誤選項也可以拿到一部分分數）</small></label>';
+  if (!it.partialOn) return h;
+  var pt = (S.ed.data.questions[i].multi ? i + '-' + j : String(i));
+  h += '<div class="pbox">';
+  if (it.correctIndex < 0) h += '<div class="sub" style="margin:0 0 6px">請先選定正解（拿滿分的選項）。</div>';
+  h += it.options.map(function (o, k) {
+    var lab = '<b>' + LETTERS[k] + '</b><span class="ptxt">' + esc(o || '（尚未輸入）') + '</span>';
+    if (k === it.correctIndex) return '<div class="prow ok" data-k="' + k + '">' + lab + '<span class="badge g">正解：<span data-pt="' + pt + '"></span> 分</span></div>';
+    return '<div class="prow" data-k="' + k + '">' + lab + '<span><input type="number" class="numin" min="0" step="0.1" data-q="ppts" data-k="' + k + '" value="' + esc(it.partialPts[k] || 0) + '"> 分</span></div>';
+  }).join('');
+  return h + '<div class="sub" style="margin:6px 0 0">沒有填的選項 = 0 分；每個選項的分數不能超過本題配分。</div></div>';
+}
+
+// ---- 題目區事件（委派） ----
 var qList = $('#qList');
+function ctx(t) {
+  var card = t.closest('.qcard');
+  if (!card) return null;
+  var i = +card.dataset.i, Q = S.ed.data.questions[i], ib = t.closest('.ibox');
+  return { card: card, i: i, Q: Q, ib: ib, it: ib ? Q.items[+ib.dataset.j] : null };
+}
 qList.addEventListener('input', function (e) {
-  var t = e.target, card = t.closest('.qcard');
-  if (!card) return;
-  var q = S.ed.data.questions[+card.dataset.i];
-  if (t.dataset.q === 'question') q.question = t.value;
-  if (t.dataset.q === 'opt') q.options[+t.dataset.j] = t.value;
+  var t = e.target, c = ctx(t);
+  if (!c) return;
+  var k = t.dataset.q;
+  if (k === 'bigtitle') c.Q.title = t.value;
+  else if (k === 'bigpts') { c.Q.points = t.value === '' ? null : parseFloat(t.value); refreshPts(); }
+  else if (c.it) {
+    if (k === 'question') c.it.question = t.value;
+    else if (k === 'opt') {
+      c.it.options[+t.dataset.j] = t.value;
+      var tx = c.ib.querySelector('.prow[data-k="' + t.dataset.j + '"] .ptxt');
+      if (tx) tx.textContent = t.value || '（尚未輸入）';
+    }
+    else if (k === 'itempts') { c.it.points = t.value === '' ? null : parseFloat(t.value); refreshPts(); }
+    else if (k === 'ppts') c.it.partialPts[+t.dataset.k] = parseFloat(t.value) || 0;
+  }
   S.dirty = true;
-  card.classList.remove('bad');
+  c.card.classList.remove('bad');
+  if (c.ib) c.ib.classList.remove('bad');
 });
 qList.addEventListener('change', function (e) {
-  var t = e.target, card = t.closest('.qcard');
-  if (!card || t.tagName !== 'SELECT') return;
-  var q = S.ed.data.questions[+card.dataset.i];
+  var t = e.target, c = ctx(t);
+  if (!c || (t.tagName !== 'SELECT' && t.type !== 'checkbox')) return;
+  var k = t.dataset.q, Q = c.Q, it = c.it;
   S.dirty = true;
-  if (t.dataset.q === 'category') {
-    q.category = t.value; q.answer = ''; q.options = []; q.correctIndex = -1;
-    ensureCat(q.category).then(renderQuestions).catch(function (er) { toast(er.message, true); });
+  if (k === 'multi') {
+    if (t.checked) { Q.multi = true; Q.subScoring = 'equal'; }
+    else {
+      if (Q.items.length > 1 && !confirm('取消「這題有子題」後，只會保留第 1 個子題，其餘的子題會被刪除。確定嗎？')) { t.checked = true; return; }
+      Q.multi = false; Q.items = Q.items.slice(0, 1); Q.title = '';
+    }
+  } else if (k === 'subScoring') {
+    if (t.value === 'custom') {                  // 切到自訂時，先帶入目前的平均分數
+      var b = bigPts(c.i), ps = b > 0 ? distribute(b, Q.items.length) : [];
+      Q.items.forEach(function (x, j) { x.points = ps[j] != null && !isNaN(ps[j]) ? ps[j] : null; });
+    }
+    Q.subScoring = t.value;
+  } else if (!it) { return; }
+  else if (k === 'partial') {
+    it.partialOn = t.checked;
+    if (it.partialPts.length !== it.options.length) it.partialPts = it.options.map(function () { return 0; });
+  } else if (k === 'category') {
+    it.category = t.value; it.answer = ''; it.options = []; it.correctIndex = -1; it.partialPts = [];
+    ensureCat(it.category).then(renderQuestions).catch(function (er) { toast(er.message, true); });
     return;
-  }
-  if (t.dataset.q === 'answer') { q.answer = t.value; rollAuto(q); }
-  if (t.dataset.q === 'optionCount') { q.optionCount = +t.value; rollAuto(q); }
+  } else if (k === 'answer') { it.answer = t.value; rollAuto(it); }
+  else if (k === 'optionCount') { it.optionCount = +t.value; rollAuto(it); }
   renderQuestions();
 });
 qList.addEventListener('click', function (e) {
   var b = e.target.closest('[data-act]');
   if (!b || b.tagName === 'INPUT' && b.type !== 'radio') return;
-  var card = b.closest('.qcard'), i = +card.dataset.i, qs = S.ed.data.questions, q = qs[i], act = b.dataset.act;
-  if (act === 'correct') { q.correctIndex = +b.dataset.j; S.dirty = true; card.classList.remove('bad'); return; }
+  var c = ctx(b);
+  if (!c) return;
+  var i = c.i, qs = S.ed.data.questions, Q = c.Q, it = c.it, act = b.dataset.act;
+  var j = c.ib ? +c.ib.dataset.j : 0;
+  if (act === 'correct') {
+    it.correctIndex = +b.dataset.j; S.dirty = true; c.card.classList.remove('bad'); c.ib.classList.remove('bad');
+    if (it.partialOn) renderQuestions();          // 正解換了：那個選項改成「拿滿分」
+    return;
+  }
   S.dirty = true;
   if (act === 'up' && i > 0) { qs.splice(i - 1, 0, qs.splice(i, 1)[0]); }
   if (act === 'down' && i < qs.length - 1) { qs.splice(i + 1, 0, qs.splice(i, 1)[0]); }
-  if (act === 'del') { if (!confirm('刪除第 ' + (i + 1) + ' 題？')) return; qs.splice(i, 1); }
-  if (act === 'reroll') rollAuto(q);
-  if (act === 'addopt' && q.options.length < MAX_OPTIONS) q.options.push('');
-  if (act === 'delopt' && q.options.length > 2) {
-    var j = +b.dataset.j;
-    q.options.splice(j, 1);
-    if (q.correctIndex === j) q.correctIndex = -1; else if (q.correctIndex > j) q.correctIndex--;
+  if (act === 'del') { if (!confirm('刪除第 ' + (i + 1) + ' 大題？')) return; qs.splice(i, 1); }
+  if (act === 'subup' && j > 0) { Q.items.splice(j - 1, 0, Q.items.splice(j, 1)[0]); }
+  if (act === 'subdown' && j < Q.items.length - 1) { Q.items.splice(j + 1, 0, Q.items.splice(j, 1)[0]); }
+  if (act === 'delsub') {
+    if (Q.items.length <= 1) { toast('至少要有 1 個子題（不需要子題的話，可以取消勾選「這題有子題」）', true); return; }
+    if (!confirm('刪除第 ' + (i + 1) + ' 大題的第 ' + (j + 1) + ' 個子題？')) return;
+    Q.items.splice(j, 1);
+  }
+  if (act === 'addsub') Q.items.push(newItem(b.dataset.mode));
+  if (act === 'reroll') rollAuto(it);
+  if (act === 'addopt' && it.options.length < MAX_OPTIONS) { it.options.push(''); it.partialPts.push(0); }
+  if (act === 'delopt' && it.options.length > 2) {
+    var m = +b.dataset.j;
+    it.options.splice(m, 1); it.partialPts.splice(m, 1);
+    if (it.correctIndex === m) it.correctIndex = -1; else if (it.correctIndex > m) it.correctIndex--;
   }
   renderQuestions();
 });
 
-// 拖曳排序（手機請用 ▲▼）
+// 拖曳排序（大題；手機請用 ▲▼）
 var dragFrom = -1;
 qList.addEventListener('mousedown', function (e) {
   var h = e.target.closest('.handle');
@@ -466,7 +674,7 @@ qList.addEventListener('mousedown', function (e) {
 document.addEventListener('mouseup', function () { $$('#qList .qcard').forEach(function (c) { c.draggable = false; }); });
 qList.addEventListener('dragstart', function (e) {
   var c = e.target.closest('.qcard');
-  if (!c) return;
+  if (!c || !c.draggable) return;
   dragFrom = +c.dataset.i;
   e.dataTransfer.effectAllowed = 'move';
   e.dataTransfer.setData('text/plain', String(dragFrom));
@@ -488,7 +696,7 @@ qList.addEventListener('drop', function (e) {
 });
 qList.addEventListener('dragend', function () { dragFrom = -1; if (S.ed) renderQuestions(); });
 
-// 儲存測驗
+// ---- 儲存測驗：先在這裡檢查，再轉成後端格式 ----
 function validateAndBuild() {
   var d = S.ed.data, errs = [], bad = {};
   var title = $('#edTitle').value.trim();
@@ -496,36 +704,68 @@ function validateAndBuild() {
   if (!title) errs.push('請輸入測驗名稱');
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) errs.push('測驗代碼只能用英文、數字、- 與 _（最多 40 字）');
   if (S.ed.isNew && findQuiz(id)) errs.push('測驗代碼「' + id + '」已經存在，請換一個');
-  if (!d.questions.length) errs.push('至少要有 1 題');
+  if (!d.questions.length) errs.push('至少要有 1 個大題');
 
-  var out = d.questions.map(function (q, i) {
-    var n = '第 ' + (i + 1) + ' 題';
-    if (q.mode === 'auto') {
-      if (!q.category) { errs.push(n + '：請選擇類別'); bad[i] = 1; }
-      else if (!q.answer) { errs.push(n + '：請選擇正解'); bad[i] = 1; }
-      else if (q.options.length < 2 || q.correctIndex < 0) { errs.push(n + '：選項還沒抽出來（類別項目不足？）'); bad[i] = 1; }
-      return { id: 'q' + (i + 1), mode: 'auto', question: (q.question || '').trim(), category: q.category, answer: q.answer,
-        optionCount: q.options.length, options: q.options, correctIndex: q.correctIndex };
+  var custom = d.scoring === 'custom', sum = 0, bigOk = true;
+  var out = d.questions.map(function (Q, i) {
+    var n = '第 ' + (i + 1) + ' 大題', bp = bigPts(i);
+    if (!(bp > 0)) { if (custom) { errs.push(n + '：請填配分（要大於 0）'); bad[i] = 1; } bigOk = false; }
+    else sum += bp;
+
+    if (Q.multi && bp > 0) {
+      if (Q.subScoring === 'custom') {
+        var s = 0, all = true;
+        Q.items.forEach(function (it, j) {
+          var p = pnum(it.points);
+          if (!(p > 0)) { errs.push(n + ' 第 ' + (j + 1) + ' 子題：請填配分（要大於 0）'); bad[i + '-' + j] = 1; all = false; } else s += p;
+        });
+        if (all && Math.abs(s - bp) > 0.05) { errs.push(n + '：子題配分加總是 ' + fmt(s) + ' 分，必須等於這個大題的 ' + fmt(bp) + ' 分'); bad[i] = 1; }
+      } else if (bp / Q.items.length < 0.1) {
+        errs.push(n + '：配分只有 ' + fmt(bp) + ' 分，無法平均分給 ' + Q.items.length + ' 個子題'); bad[i] = 1;
+      }
     }
-    var opts = q.options.map(function (o) { return o.trim(); });
-    if (!(q.question || '').trim()) { errs.push(n + '：請輸入題目'); bad[i] = 1; }
-    if (opts.some(function (o) { return !o; })) { errs.push(n + '：有選項是空的'); bad[i] = 1; }
-    else if (new Set(opts).size !== opts.length) { errs.push(n + '：有重複的選項'); bad[i] = 1; }
-    if (q.correctIndex < 0) { errs.push(n + '：請勾選正解'); bad[i] = 1; }
-    return { id: 'q' + (i + 1), mode: 'manual', question: q.question.trim(), options: opts, correctIndex: q.correctIndex };
+
+    var items = Q.items.map(function (it, j) {
+      var lab = Q.multi ? n + ' 第 ' + (j + 1) + ' 子題' : n, key = Q.multi ? i + '-' + j : String(i);
+      function fail(msg) { errs.push(lab + '：' + msg); bad[key] = 1; }
+      var ip = itemPts(i, j), opts = it.options.map(function (o) { return o.trim(); }), ok = true;
+      if (it.mode === 'auto') {
+        if (!it.category) { fail('請選擇類別'); ok = false; }
+        else if (!it.answer) { fail('請選擇正解'); ok = false; }
+        else if (it.options.length < 2 || it.correctIndex < 0) { fail('選項還沒抽出來（類別項目不足？）'); ok = false; }
+      } else {
+        if (opts.some(function (o) { return !o; })) { fail('有選項是空的'); ok = false; }
+        else if (new Set(opts).size !== opts.length) { fail('有重複的選項'); ok = false; }
+        if (it.correctIndex < 0) { fail('請勾選正解'); ok = false; }
+      }
+      var res = { mode: it.mode, question: (it.question || '').trim(), options: opts, correctIndex: it.correctIndex, points: ip };
+      if (it.mode === 'auto') { res.category = it.category; res.answer = it.answer; }
+      if (it.partialOn && ok) {
+        res.partial = opts.map(function (o, k) {
+          if (k === it.correctIndex) return 1;
+          var v = it.partialPts[k] || 0;
+          if (v < 0 || (ip > 0 && v > ip + 0.001)) { fail('選項 ' + LETTERS[k] + ' 的部分分數要在 0 ～ ' + fmt(ip) + ' 分之間'); return 0; }
+          return ip > 0 ? Math.round(v / ip * 1e6) / 1e6 : 0;
+        });
+      }
+      return res;
+    });
+    return { title: Q.multi ? (Q.title || '').trim() : '', multi: !!Q.multi, subScoring: Q.subScoring, points: bp, items: items };
   });
+  if (custom && bigOk && Math.abs(sum - TOTAL) > 0.05) errs.unshift('各大題配分加總是 ' + fmt(sum) + ' 分，必須剛好 100 分（目前' + (sum < TOTAL ? '還差 ' : '超過 ') + fmt(Math.abs(TOTAL - sum)) + ' 分）');
   return { errs: errs, bad: bad, quiz: {
     quizId: id, title: title, description: $('#edDesc').value.trim(), allowRetake: $('#edRetake').checked, closed: !$('#edOpen').checked,
-    updatedAt: new Date().toISOString(), questions: out } };
+    scoring: d.scoring, updatedAt: new Date().toISOString(), questions: out } };
 }
 
 $('#btnEdSave').onclick = function () {
   var btn = this;
   var r = validateAndBuild();
-  $$('#qList .qcard').forEach(function (c, i) { c.classList.toggle('bad', !!r.bad[i]); });
+  $$('#qList .qcard').forEach(function (c) { c.classList.toggle('bad', !!r.bad[c.dataset.i]); });
+  $$('#qList .scard').forEach(function (c) { c.classList.toggle('bad', !!r.bad[c.dataset.i + '-' + c.dataset.j]); });
   if (r.errs.length) {
     toast(r.errs[0] + (r.errs.length > 1 ? '（還有 ' + (r.errs.length - 1) + ' 個問題）' : ''), true);
-    var first = $('#qList .qcard.bad'); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    var first = $('#qList .scard.bad') || $('#qList .qcard.bad'); if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
     return;
   }
   busy(btn, function () {
@@ -535,7 +775,7 @@ $('#btnEdSave').onclick = function () {
         var saved = j.quiz; saved.updatedAt = j.updatedAt;
         var entry = findQuiz(saved.quizId);
         if (entry) { entry.updatedAt = j.updatedAt; entry.data = saved; } else { S.quizzes.unshift({ id: saved.quizId, updatedAt: j.updatedAt, data: saved }); }
-        S.ed.isNew = false; S.ed.updatedAt = j.updatedAt; S.ed.data = clone(saved);
+        S.ed.isNew = false; S.ed.updatedAt = j.updatedAt; S.ed.data = toEditor(clone(saved));
         $('#edId').disabled = true; $('#edTitleH').textContent = '編輯測驗';
         S.dirty = false;
         $('#edStatus').textContent = '✓ 已儲存 ' + new Date().toLocaleTimeString() + '（已立即生效）';
@@ -653,16 +893,21 @@ function renderResults(rows) {
 
   var html = '<div class="stats">' +
     stat(lat.length, '參加人數') + stat(rows.length, '作答筆數' + (repeats ? '（含 ' + repeats + ' 筆重複）' : '')) +
-    stat(lat.length ? avg.toFixed(1) + (quizId ? ' / ' + total : '') : '-', '平均分（每人最新一次）') +
-    stat(lat.length ? maxS : '-', '最高分') + '</div>';
+    stat(lat.length ? fmt(round1(avg)) + (quizId ? ' / ' + fmt(total) : '') : '-', '平均分（每人最新一次）') +
+    stat(lat.length ? fmt(maxS) : '-', '最高分') + '</div>';
 
   if (quizId && lat.length) {
     var acc = {};
-    lat.forEach(function (r) { (r.answers || []).forEach(function (a) { var x = acc[a.id] || (acc[a.id] = { ok: 0, n: 0 }); x.n++; if (a.ok) x.ok++; }); });
-    var ids = Object.keys(acc).sort(function (a, b) { return parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10); });
-    html += '<div class="card"><h2 style="font-size:16px;margin-bottom:8px">每題答對率</h2>' + ids.map(function (id) {
-      var x = acc[id], p = Math.round(x.ok / x.n * 100), qq = quiz && quiz.data.questions.filter(function (q) { return q.id === id; })[0];
-      var label = '第 ' + id.slice(1) + ' 題' + (qq ? '：' + (qq.mode === 'auto' ? qq.answer : (qq.question || '')) : '');
+    lat.forEach(function (r) {
+      (r.answers || []).forEach(function (a) {
+        var x = acc[a.id] || (acc[a.id] = { got: 0, max: 0 });
+        x.max += typeof a.max === 'number' ? a.max : 1;                        // 舊紀錄沒有配分：答對 = 1、答錯 = 0
+        x.got += typeof a.earned === 'number' ? a.earned : (a.ok ? 1 : 0);
+      });
+    });
+    var ids = Object.keys(acc).sort(function (a, b) { return itemOrder(a) - itemOrder(b); });
+    html += '<div class="card"><h2 style="font-size:16px;margin-bottom:8px">每題得分率 <small style="font-weight:400;color:var(--muted)">（全部作答者拿到的分數 ÷ 該題滿分）</small></h2>' + ids.map(function (id) {
+      var x = acc[id], p = x.max ? Math.round(x.got / x.max * 100) : 0, label = itemLabel(quiz, id);
       return '<div class="acc' + (p < 40 ? ' low' : '') + '"><span class="l" title="' + esc(label) + '">' + esc(label) + '</span><span class="b"><i style="width:' + p + '%"></i></span><span class="p">' + p + '%</span></div>';
     }).join('') + '</div>';
   }
@@ -672,18 +917,27 @@ function renderResults(rows) {
     '<button class="btn sm" id="btnCsv">下載 CSV</button></div><div style="max-height:480px;overflow:auto"><table><thead><tr><th>時間</th><th>暱稱</th><th>成績</th><th>備註</th>' +
     (quizId ? '' : '<th>測驗</th>') + '</tr></thead><tbody>' +
     (sorted.map(function (r) {
-      return '<tr><td>' + esc(r.time) + '</td><td>' + esc(r.name) + '</td><td><b>' + r.score + '</b> / ' + r.total + '</td><td>' +
+      return '<tr><td>' + esc(r.time) + '</td><td>' + esc(r.name) + '</td><td><b>' + fmt(r.score) + '</b> / ' + fmt(r.total) + '</td><td>' +
         (r._n > 1 ? '<span class="badge a">第 ' + r._n + ' 次作答</span>' : '') + '</td>' + (quizId ? '' : '<td class="mono">' + esc(r.quizId) + '</td>') + '</tr>';
     }).join('') || '<tr><td colspan="5" class="sub">還沒有作答紀錄</td></tr>') + '</tbody></table></div></div>';
   $('#resBody').innerHTML = html;
 
   var csvBtn = $('#btnCsv');
   if (csvBtn) csvBtn.onclick = function () {
-    var lines = [['時間', '測驗', '暱稱', '分數', '總題數', '第幾次作答']].concat(rows.map(function (r) { return [r.time, r.quizId, r.name, r.score, r.total, r._n]; }));
+    var lines = [['時間', '測驗', '暱稱', '分數', '滿分', '第幾次作答']].concat(rows.map(function (r) { return [r.time, r.quizId, r.name, r.score, r.total, r._n]; }));
     var csv = '﻿' + lines.map(function (l) { return l.map(function (c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'results-' + (quizId || 'all') + '.csv'; document.body.appendChild(a); a.click(); a.remove();
   };
+}
+/** 作答紀錄裡的題目編號：q3 = 第 3 大題，q3-2 = 第 3 大題的第 2 個子題 */
+function itemOrder(id) { var m = String(id).match(/^q(\d+)(?:-(\d+))?$/); return m ? +m[1] * 1000 + (m[2] ? +m[2] : 0) : 0; }
+function itemLabel(quiz, id) {
+  var m = String(id).match(/^q(\d+)(?:-(\d+))?$/);
+  if (!m) return id;
+  var Q = quiz && quiz.data.questions[+m[1] - 1], it = Q && (Array.isArray(Q.items) ? Q.items[m[2] ? +m[2] - 1 : 0] : Q);
+  var text = it ? (it.mode === 'auto' ? it.answer : it.question) : '';
+  return '第 ' + m[1] + ' 大題' + (m[2] ? ' (' + m[2] + ')' : '') + (text ? '：' + text : '');
 }
 function stat(v, k) { return '<div class="stat"><div class="v">' + esc(v) + '</div><div class="k">' + esc(k) + '</div></div>'; }
 

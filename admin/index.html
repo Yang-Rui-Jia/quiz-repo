@@ -96,6 +96,19 @@ ol.steps li { margin:6px 0; }
 .chips { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
 .chip { padding:4px 12px; border-radius:99px; border:1.5px solid var(--line); font-size:14px; }
 .chip.ok { border-color:var(--green); background:var(--green-soft); color:var(--green-dark); font-weight:700; }
+.chk { display:block; margin:8px 0; font-size:14px; font-weight:600; }
+.chk small { font-weight:400; color:var(--muted); }
+.chk input { width:auto; display:inline; margin:0 6px 0 0; accent-color:var(--green); }
+.pin { display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:600; margin:0; }
+.numin { display:inline-block !important; width:84px !important; margin:0 !important; padding:4px 8px !important; }
+select.inl { display:inline-block !important; width:auto !important; margin:0 !important; padding:4px 8px !important; }
+.ibox.scard { border:1.5px dashed var(--line); border-radius:12px; padding:12px 14px; margin:10px 0; }
+.ibox.scard.bad { border-color:var(--red); border-style:solid; }
+.pbox { border:1.5px solid var(--line); border-radius:10px; padding:8px 12px; margin:6px 0 8px; background:var(--bg); }
+.prow { display:flex; align-items:center; gap:8px; padding:3px 0; }
+.prow b { width:22px; text-align:center; color:var(--muted); }
+.prow .ptxt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.prow.ok .ptxt { font-weight:700; }
 .savebar { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line); padding:10px 20px; z-index:9; }
 .savebar .in { max-width:980px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 
@@ -185,15 +198,24 @@ th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var
         </div>
       </div>
 
+      <div class="card" id="scoreCard">
+        <div class="row">
+          <b>配分</b>
+          <select id="edScoring" class="inl"><option value="equal">每個大題平均分配</option><option value="custom">自訂每個大題的分數</option></select>
+          <span class="badge" id="scoreSum"></span>
+        </div>
+        <p class="sub" style="margin:8px 0 0;font-size:13px">滿分固定 <b>100</b> 分。「平均分配」會自動分（除不盡時到小數第一位，例如 3 題 → 33.4 / 33.3 / 33.3）；「自訂」則自己填每個大題的分數，加起來必須剛好 100。</p>
+      </div>
+
       <div class="row" style="margin:16px 0 8px">
         <h2 style="font-size:17px">題目</h2><span class="badge" id="qCount"></span>
       </div>
       <div id="qList"></div>
       <div class="row">
-        <button class="btn" id="btnAddAuto">＋ 自動生成選項題</button>
-        <button class="btn" id="btnAddManual">＋ 手動輸入選項題</button>
+        <button class="btn" id="btnAddAuto">＋ 自動生成選項題（大題）</button>
+        <button class="btn" id="btnAddManual">＋ 手動輸入選項題（大題）</button>
       </div>
-      <p class="sub" style="margin-top:10px">▲▼ 或拖曳左邊的 ⠿ 可以調整順序。<b>自動生成</b>：選類別 + 正解，系統從該類別抽干擾選項。<b>手動輸入</b>：自己打題目與選項。</p>
+      <p class="sub" style="margin-top:10px">每個「大題」在玩家手機上是一頁。▲▼ 或拖曳左邊的 ⠿ 可以調整順序。<b>自動生成</b>：選類別 + 正解，系統從該類別抽干擾選項。<b>手動輸入</b>：自己打題目與選項（題目文字可留空）。要在大題底下加子題，請勾選該大題的「這題有子題」；要讓某些錯誤選項也拿分，請勾選「部分給分」。</p>
 
       <div class="savebar"><div class="in">
         <button class="btn" id="btnEdBack">← 返回列表</button>
