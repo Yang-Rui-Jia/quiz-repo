@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>現場互動測驗</title>
+<style>
+:root {
+  --bg: #f3f6f4;
+  --card: #ffffff;
+  --text: #1b2421;
+  --muted: #66736e;
+  --line: #dfe6e2;
+  --green: #06c755;
+  --green-dark: #04a446;
+  --green-soft: #e6f8ed;
+  --red: #d93838;
+  --red-soft: #fdecec;
+  --amber-soft: #fff6dc;
+  --amber: #8a6300;
+  --shadow: 0 1px 3px rgba(20, 40, 30, .08), 0 6px 18px rgba(20, 40, 30, .05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101513; --card: #1a211e; --text: #e9f0ec; --muted: #93a29b; --line: #2b3632;
+    --green-soft: #12301f; --red-soft: #3a1c1c; --amber-soft: #3a3010; --amber: #f0c957;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.wrap { max-width: 640px; margin: 0 auto; padding: 16px 16px 96px; }
+.hidden { display: none !important; }
+
+.banner {
+  background: var(--amber-soft); color: var(--amber); border-radius: 10px;
+  padding: 8px 12px; font-size: 14px; margin-bottom: 12px;
+}
+h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
+.desc { color: var(--muted); font-size: 15px; margin: 0 0 12px; }
+
+/* 進度列 */
+.progress {
+  position: sticky; top: 0; z-index: 5; margin: 0 -16px 12px; padding: 10px 16px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.progress .row { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); }
+.progress .row b { color: var(--text); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--green); transition: width .25s; }
+
+/* 題目卡片 */
+.card {
+  background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 14px;
+  box-shadow: var(--shadow); border: 2px solid transparent; transition: border-color .3s;
+}
+.card.flash { border-color: var(--green); }
+.card .qno { font-size: 13px; color: var(--green-dark); font-weight: 700; letter-spacing: .04em; }
+.card .qtext { font-size: 17px; font-weight: 600; margin: 2px 0 12px; }
+.opt { display: block; margin: 8px 0; cursor: pointer; }
+.opt input { position: absolute; opacity: 0; pointer-events: none; }
+.opt span {
+  display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 12px;
+  border: 1.5px solid var(--line); background: var(--card); transition: all .12s;
+}
+.opt span b {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--bg); color: var(--muted); font-size: 14px;
+}
+.opt input:checked + span { border-color: var(--green); background: var(--green-soft); }
+.opt input:checked + span b { background: var(--green); color: #fff; }
+.opt input:focus-visible + span { outline: 3px solid var(--green); outline-offset: 2px; }
+
+/* 按鈕 */
+.btn {
+  display: block; width: 100%; padding: 14px 16px; border: 0; border-radius: 14px;
+  font: inherit; font-weight: 700; font-size: 17px; cursor: pointer;
+  background: var(--green); color: #fff; text-align: center; text-decoration: none;
+}
+.btn:active { background: var(--green-dark); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn.ghost { background: transparent; color: var(--text); border: 1.5px solid var(--line); }
+.btn.small { display: inline-block; width: auto; padding: 6px 14px; font-size: 14px; border-radius: 10px; }
+.stack { display: grid; gap: 10px; margin-top: 16px; }
+
+/* 確認頁 */
+.rv { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rv:last-child { border-bottom: 0; }
+.rv .n { flex: none; width: 34px; font-weight: 700; color: var(--muted); }
+.rv .a { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rv .a small { display: block; color: var(--muted); font-size: 13px; }
+.rv .a .miss { color: var(--red); font-weight: 700; }
+.rv.missing { background: var(--red-soft); margin: 0 -16px; padding: 12px 16px; }
+
+/* 結果 / 訊息畫面 */
+.center { text-align: center; padding-top: 28px; }
+.score { font-size: 64px; font-weight: 800; color: var(--green-dark); line-height: 1.1; margin: 6px 0; }
+.score small { font-size: 28px; color: var(--muted); font-weight: 600; }
+.emoji { font-size: 52px; }
+.hint { color: var(--muted); font-size: 14px; margin: 8px 0; }
+.status { font-size: 14px; margin: 12px 0 4px; min-height: 22px; }
+.status.ok { color: var(--green-dark); }
+.status.err { color: var(--red); }
+.spinner {
+  width: 34px; height: 34px; margin: 60px auto 12px; border-radius: 50%;
+  border: 4px solid var(--line); border-top-color: var(--green); animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.errbox { background: var(--red-soft); color: var(--red); padding: 14px; border-radius: 12px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 彈窗 */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; padding: 24px; z-index: 20; }
+.modal .box { background: var(--card); border-radius: 18px; padding: 20px; width: 100%; max-width: 380px; }
+.modal h3 { margin: 0 0 6px; }
+.modal p { margin: 0 0 4px; color: var(--muted); }
+.bubble { background: var(--green-soft); border-radius: 14px; padding: 10px 14px; margin-top: 10px; text-align: left; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="mockBanner" class="banner hidden">🧪 測試模式：不會連線 LINE，成績只存在這支手機/瀏覽器裡。</div>
+
+  <!-- 載入中 -->
+  <section id="v-loading" class="center">
+    <div class="spinner"></div>
+    <div class="hint" id="loadingText">載入中…</div>
+  </section>
+
+  <!-- 錯誤 -->
+  <section id="v-error" class="center hidden">
+    <div class="emoji">😵</div>
+    <h1>哎呀，出了點問題</h1>
+    <div class="errbox" id="errText"></div>
+    <div class="stack"><button class="btn ghost" onclick="location.reload()">重新整理</button></div>
+  </section>
+
+  <!-- 需要先加好友 -->
+  <section id="v-friend" class="center hidden">
+    <div class="emoji">👋</div>
+    <h1>先加入官方帳號好友</h1>
+    <p class="desc">作答完成後，成績會透過官方帳號的聊天室回覆給你。<br>請先加入好友，再回來繼續。</p>
+    <div class="stack">
+      <button class="btn" id="btnAddFriend">加入好友</button>
+      <button class="btn ghost" id="btnFriendDone">我已加入，繼續</button>
+    </div>
+  </section>
+
+  <!-- 已經作答過 -->
+  <section id="v-done" class="center hidden">
+    <div class="emoji">✅</div>
+    <h1>您已完成作答</h1>
+    <div class="score" id="doneScore"></div>
+    <p class="hint">每人限作答一次。如有疑問請洽現場工作人員。</p>
+    <div class="stack"><button class="btn" data-action="query">點我用 LINE 查詢成績</button></div>
+    <p class="hint">按下後會開啟聊天室，並自動帶入一句話，<br>你只要按「送出」就會收到成績訊息。</p>
+  </section>
+
+  <!-- 作答頁 -->
+  <section id="v-quiz" class="hidden">
+    <h1 id="quizTitle"></h1>
+    <p class="desc" id="quizDesc"></p>
+    <div class="progress">
+      <div class="row"><span>已作答 <b id="pDone">0</b> / <span id="pTotal">0</span></span><span id="pHint">可隨時修改答案</span></div>
+      <div class="bar"><i id="pBar"></i></div>
+    </div>
+    <div id="questions"></div>
+    <div class="stack"><button class="btn" id="btnReview">檢視作答總覽</button></div>
+  </section>
+
+  <!-- 確認頁 -->
+  <section id="v-review" class="hidden">
+    <h1>確認你的答案</h1>
+    <p class="desc">送出後就不能再修改。想改的題目請按「修改」。</p>
+    <div class="card" id="reviewList" style="padding-top:4px;padding-bottom:4px"></div>
+    <div class="stack">
+      <button class="btn" id="btnSubmit">確認送出</button>
+      <button class="btn ghost" id="btnBack">返回繼續作答</button>
+    </div>
+  </section>
+
+  <!-- 結果頁 -->
+  <section id="v-result" class="center hidden">
+    <div class="emoji">🎉</div>
+    <h1>您已完成作答</h1>
+    <div class="score" id="resultScore"></div>
+    <div class="status" id="saveStatus"></div>
+    <div class="stack">
+      <button class="btn" id="btnQuery" data-action="query" disabled>點我用 LINE 查詢成績</button>
+      <button class="btn ghost small hidden" id="btnRetrySave" style="margin:0 auto">重新送出</button>
+    </div>
+    <p class="hint">按下後會開啟聊天室，並自動帶入一句話，<br>你只要按「送出」就會收到成績訊息。</p>
+    <div id="mockReply"></div>
+  </section>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="box">
+    <h3 id="modalTitle"></h3>
+    <p id="modalBody"></p>
+    <div class="stack">
+      <button class="btn" id="modalOk">確定</button>
+      <button class="btn ghost" id="modalCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="../config.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var cfg = window.APP_CONFIG || {};
+  var params = new URLSearchParams(location.search);
+  var MOCK = params.get('mock') === '1';         // 內建示範題目（不需後端）
+  var PREVIEW = params.get('preview') === '1';   // 管理者預覽真實題目（用後台登入的管理密碼，不記錄成績）
+  var SIM = MOCK || PREVIEW;                     // 這兩種模式都不連 LINE、不記錄成績
+  var LETTERS = 'ABCDEFGHIJ';
+  var QUERY_KEYWORD = '查詢成績';       // 要和 gas/Code.gs 的 QUERY_KEYWORD 一致
+
+  var $ = function (id) { return document.getElementById(id); };
+  var state = {
+    quizId: '', quiz: null, userId: '', name: '', token: '', key: '', sid: '',
+    answers: [], submitted: false, score: 0, total: 0, recorded: false
+  };
+
+  // ---------- 小工具 ----------
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function show(id) {
+    ['v-loading', 'v-error', 'v-friend', 'v-done', 'v-quiz', 'v-review', 'v-result'].forEach(function (v) {
+      $(v).classList.toggle('hidden', v !== id);
+    });
+    window.scrollTo(0, 0);
+  }
+  function fail(err) {
+    var msg = err && err.message ? err.message : String(err);
+    $('errText').textContent = msg;
+    show('v-error');
+  }
+  function confirmBox(title, body, okText, cancelText) {
+    return new Promise(function (resolve) {
+      $('modalTitle').textContent = title;
+      $('modalBody').textContent = body;
+      $('modalOk').textContent = okText || '確定';
+      $('modalCancel').textContent = cancelText || '取消';
+      $('modal').classList.remove('hidden');
+      function done(v) { $('modal').classList.add('hidden'); $('modalOk').onclick = $('modalCancel').onclick = null; resolve(v); }
+      $('modalOk').onclick = function () { done(true); };
+      $('modalCancel').onclick = function () { done(false); };
+    });
+  }
+
+  // ---------- 後端 API（Google Apps Script） ----------
+  // 用 text/plain 送 JSON，瀏覽器就不會做 CORS 預檢，GAS 才收得到。
+  function api(payload) {
+    if (MOCK) return mockApi(payload);
+    payload.token = state.token; payload.key = state.key;
+    if (!cfg.gasUrl) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 gasUrl）'));
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 20000);
+    return fetch(cfg.gasUrl, { method: 'POST', body: JSON.stringify(payload), signal: ctrl.signal })
+      .then(function (r) { return r.json(); })
+      .catch(function (e) { throw new Error(e.name === 'AbortError' ? '連線逾時，請檢查網路後再試一次' : '連線失敗，請檢查網路後再試一次'); })
+      .then(function (j) { clearTimeout(timer); return j; });
+  }
+
+  // 測試模式：用內建的 sample-quiz.json 假裝後端（連同「後端算分」也在這裡模擬）
+  var mockQuizP = null;
+  function mockApi(p) {
+    mockQuizP = mockQuizP || fetch('sample-quiz.json').then(function (r) { return r.json(); });
+    return mockQuizP.then(function (q) {
+      return new Promise(function (resolve) {
+        setTimeout(function () {
+          if (p.action === 'start') {
+            resolve({ ok: true, submitted: false, quiz: {
+              quizId: q.quizId, title: q.title, description: q.description,
+              questions: q.questions.map(function (x) { return { id: x.id, question: x.question, options: x.options }; })
+            } });
+          } else if (p.action === 'submit') {
+            var score = q.questions.reduce(function (s, x, i) { return s + (p.picks[i] === x.correctIndex ? 1 : 0); }, 0);
+            resolve({ ok: true, score: score, total: q.questions.length });
+          } else resolve({ ok: false, error: 'unknown_action' });
+        }, 350);
+      });
+    });
+  }
+
+  // ---------- 取得 quizId / 載入測驗 ----------
+  function getQuizId() {
+    var id = params.get('quizId');
+    if (!id) {
+      // LIFF 有時會把參數包在 liff.state 裡
+      var st = params.get('liff.state') || '';
+      var q = st.indexOf('?') >= 0 ? st.slice(st.indexOf('?') + 1) : st;
+      id = new URLSearchParams(q).get('quizId');
+    }
+    return (id || '').trim();
+  }
+
+  // ---------- 主流程 ----------
+  // 題目不在網頁裡：先驗證 LINE 身分，再向後端要題目（後端也會順便判斷是否已作答過）
+  function main() {
+    $('mockBanner').textContent = MOCK
+      ? '🧪 測試模式：使用內建的示範題目，不會連線 LINE，也不會記錄成績。'
+      : '👀 預覽模式：管理者預覽，不會連線 LINE，也不會記錄成績。';
+    $('mockBanner').classList.toggle('hidden', !SIM);
+    Promise.resolve().then(function () {
+      if (MOCK) {
+        state.userId = 'mock-user'; state.name = '測試玩家'; state.token = 'mock';
+        return;
+      }
+      if (PREVIEW) {
+        state.userId = 'preview'; state.name = '預覽';
+        try { state.key = localStorage.getItem('quizAdminKey') || ''; } catch (e) {}
+        if (!state.key) throw new Error('請先登入管理後台，再從後台「發布」頁開啟預覽。');
+        return;
+      }
+      if (!cfg.liffId) throw new Error('系統尚未設定完成（config.js 缺少 liffId）');
+      $('loadingText').textContent = '連線 LINE…';
+      return liff.init({ liffId: cfg.liffId }).then(function () {
+        if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return new Promise(function () {}); }
+        return liff.getProfile().then(function (p) {
+          state.userId = p.userId; state.name = p.displayName;
+          state.token = liff.getAccessToken();
+        });
+      });
+    }).then(function () {
+      state.quizId = getQuizId();
+      if (!/^[A-Za-z0-9_-]{1,60}$/.test(state.quizId)) throw new Error('網址缺少測驗代碼，請重新掃描 QRCode。');
+      return checkFriend();
+    }).then(function (ok) {
+      if (!ok) return;
+      $('loadingText').textContent = '載入測驗…';
+      return api({ action: 'start', quizId: state.quizId }).then(function (r) {
+        if (!r.ok) throw new Error(explainError(r.error));
+        if (r.submitted) return showDone(r.score, r.total);
+        state.quiz = r.quiz;
+        startQuiz();
+      });
+    }).catch(fail);
+  }
+
+  function checkFriend() {
+    if (SIM) return Promise.resolve(true);
+    return liff.getFriendship().then(function (f) {
+      if (f.friendFlag) return true;
+      show('v-friend');
+      return false;
+    }).catch(function (e) {
+      // Login channel 沒有連結官方帳號時會失敗；不擋玩家，但在 console 留紀錄方便除錯
+      console.warn('getFriendship failed:', e);
+      return true;
+    });
+  }
+
+  $('btnAddFriend').onclick = function () {
+    var url = 'https://line.me/R/ti/p/' + encodeURIComponent(cfg.oaId || '');
+    if (!cfg.oaId) return fail(new Error('系統尚未設定完成（config.js 缺少 oaId）'));
+    liff.openWindow({ url: url, external: false });
+  };
+  $('btnFriendDone').onclick = function () { show('v-loading'); main(); };
+
+  function explainError(code) {
+    var map = {
+      invalid_token: '登入狀態已過期，請關閉頁面後重新掃描 QRCode。',
+      missing_token: '登入狀態遺失，請關閉頁面後重新掃描 QRCode。',
+      bad_quiz_id: '測驗代碼格式不正確。',
+      quiz_not_found: '找不到這場測驗。請確認 QRCode 是否正確，或請管理者確認測驗仍然存在。',
+      forbidden: '管理密碼不正確，請重新登入管理後台。',
+      bad_answers: '作答資料格式不正確，請重新整理頁面後再試一次。'
+    };
+    return map[code] || ('系統回應異常（' + code + '）');
+  }
+
+  // ---------- 已作答過 ----------
+  function showDone(score, total) {
+    state.score = score; state.total = total;
+    $('doneScore').innerHTML = esc(score) + '<small> / ' + esc(total) + '</small>';
+    show('v-done');
+  }
+
+  // ---------- 作答畫面 ----------
+  function draftKey() { return 'quizDraft:' + state.quizId + ':' + state.userId; }
+
+  function startQuiz() {
+    var qz = state.quiz;
+    state.answers = qz.questions.map(function () { return -1; });
+    try {
+      var saved = JSON.parse(localStorage.getItem(draftKey()) || 'null');
+      if (Array.isArray(saved) && saved.length === state.answers.length) state.answers = saved;
+    } catch (e) {}
+
+    $('quizTitle').textContent = qz.title || '現場互動測驗';
+    $('quizDesc').textContent = qz.description || '';
+    $('quizDesc').classList.toggle('hidden', !qz.description);
+    $('pTotal').textContent = qz.questions.length;
+
+    $('questions').innerHTML = qz.questions.map(function (q, i) {
+      var opts = q.options.map(function (o, j) {
+        return '<label class="opt"><input type="radio" name="q' + i + '" value="' + j + '"' +
+          (state.answers[i] === j ? ' checked' : '') + '><span><b>' + LETTERS[j] + '</b><em style="font-style:normal">' + esc(o) + '</em></span></label>';
+      }).join('');
+      return '<div class="card" id="card' + i + '"><div class="qno">第 ' + (i + 1) + ' 題</div>' +
+        '<div class="qtext">' + esc(q.question || '請選出正確答案') + '</div>' + opts + '</div>';
+    }).join('');
+
+    $('questions').onchange = function (ev) {
+      var t = ev.target;
+      if (t.type !== 'radio') return;
+      state.answers[Number(t.name.slice(1))] = Number(t.value);
+      try { localStorage.setItem(draftKey(), JSON.stringify(state.answers)); } catch (e) {}
+      updateProgress();
+    };
+    updateProgress();
+    show('v-quiz');
+  }
+
+  function answeredCount() { return state.answers.filter(function (a) { return a >= 0; }).length; }
+  function updateProgress() {
+    var n = answeredCount(), total = state.answers.length;
+    $('pDone').textContent = n;
+    $('pBar').style.width = (n / total * 100) + '%';
+    $('pHint').textContent = n === total ? '全部作答完成 ✓' : '可隨時修改答案';
+  }
+
+  $('btnReview').onclick = renderReview;
+  $('btnBack').onclick = function () { show('v-quiz'); };
+
+  function renderReview() {
+    var qz = state.quiz;
+    $('reviewList').innerHTML = qz.questions.map(function (q, i) {
+      var a = state.answers[i];
+      var picked = a >= 0
+        ? '你選了：<b>' + LETTERS[a] + '</b>　' + esc(q.options[a])
+        : '<span class="miss">尚未作答</span>';
+      return '<div class="rv' + (a < 0 ? ' missing' : '') + '"><div class="n">' + (i + 1) + '.</div>' +
+        '<div class="a">' + picked + '<small>' + esc(q.question || '請選出正確答案') + '</small></div>' +
+        '<button class="btn ghost small" data-edit="' + i + '">修改</button></div>';
+    }).join('');
+    var miss = state.answers.length - answeredCount();
+    $('btnSubmit').textContent = miss ? '尚有 ' + miss + ' 題未作答，仍要送出' : '確認送出';
+    show('v-review');
+  }
+
+  $('reviewList').onclick = function (ev) {
+    var b = ev.target.closest('[data-edit]');
+    if (!b) return;
+    show('v-quiz');
+    var card = $('card' + b.getAttribute('data-edit'));
+    // 先讓畫面切換完成再捲動
+    setTimeout(function () {
+      card.scrollIntoView({ block: 'center' });
+      card.classList.add('flash');
+      setTimeout(function () { card.classList.remove('flash'); }, 1500);
+    }, 30);
+  };
+
+  // ---------- 送出 ----------
+  $('btnSubmit').onclick = function () {
+    var miss = state.answers.length - answeredCount();
+    var p = miss
+      ? confirmBox('還有 ' + miss + ' 題沒作答', '未作答的題目會算答錯，送出後就不能再修改。', '仍要送出', '回去作答')
+      : confirmBox('確認送出？', '送出後就不能再修改答案。', '確認送出', '再檢查一下');
+    p.then(function (yes) { if (yes) doSubmit(); });
+  };
+
+  function doSubmit() {
+    if (state.submitted) return;
+    state.submitted = true;                      // 鎖定：不能再改
+    // 每次送出一個編號：網路不好重送時，後端認得是同一次，不會重複記錄
+    state.sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+    try { localStorage.removeItem(draftKey()); } catch (e) {}
+    show('v-result');
+    saveResult();
+  }
+
+  function setScore(score, total) {
+    state.score = score; state.total = total;
+    $('resultScore').innerHTML = '成績：' + esc(score) + '<small> / ' + esc(total) + '</small>';
+  }
+
+  // 成績由後端比對正解後回傳（正解不在手機上）
+  function saveResult() {
+    var status = $('saveStatus');
+    $('resultScore').textContent = '計算成績中…';
+    status.className = 'status'; status.textContent = '正在送出答案…';
+    $('btnRetrySave').classList.add('hidden');
+    api({ action: 'submit', quizId: state.quizId, picks: state.answers, submissionId: state.sid })
+      .then(function (r) {
+        if (r.ok) { setScore(r.score, r.total); return recorded(SIM ? '（預覽／測試模式：成績不會記錄）' : '成績已記錄 ✓'); }
+        if (r.error === 'duplicate') {           // 在別台裝置已作答過
+          setScore(r.score, r.total);
+          return recorded('偵測到您之前已作答過，以先前成績為準');
+        }
+        throw new Error(explainError(r.error));
+      }).catch(function (e) {
+        $('resultScore').textContent = '尚未取得成績';
+        status.className = 'status err';
+        status.textContent = '⚠️ 送出失敗：' + e.message;
+        $('btnRetrySave').classList.remove('hidden');
+      });
+  }
+  function recorded(text) {
+    state.recorded = true;
+    $('saveStatus').className = 'status ok';
+    $('saveStatus').textContent = text;
+    $('btnQuery').disabled = false;
+    $('btnRetrySave').classList.add('hidden');
+  }
+  $('btnRetrySave').onclick = saveResult;
+
+  // ---------- 用 LINE 查詢成績 ----------
+  document.addEventListener('click', function (ev) {
+    if (!ev.target.closest('[data-action="query"]')) return;
+    var text = QUERY_KEYWORD + ' ' + state.quizId;
+    if (SIM) {
+      $('mockReply').innerHTML = '<div class="bubble">🧪 測試/預覽模式：正式環境會開啟 LINE 聊天室並帶入「<b>' + esc(text) +
+        '</b>」，你按送出後，官方帳號會回覆：<br><b>您已完成作答，成績：' + state.score + '/' + state.total + '</b></div>';
+      return;
+    }
+    if (!cfg.oaId) return fail(new Error('系統尚未設定完成（config.js 缺少 oaId）'));
+    var url = 'https://line.me/R/oaMessage/' + encodeURIComponent(cfg.oaId) + '/?' + encodeURIComponent(text);
+    try { liff.openWindow({ url: url, external: false }); } catch (e) { location.href = url; }
+  });
+
+  main();
+})();
+</script>
+</body>
+</html>

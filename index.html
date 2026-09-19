@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>現場互動測驗</title>
+<style>
+  :root { --bg:#f4f6f5; --card:#fff; --text:#1b2421; --muted:#66736e; --line:#dfe6e2; --green:#06c755; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#101513; --card:#1a211e; --text:#e9f0ec; --muted:#93a29b; --line:#2b3632; } }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text);
+    font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; padding:24px; }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:28px; max-width:460px; width:100%; }
+  h1 { margin:0 0 6px; font-size:24px; } p { color:var(--muted); margin:0 0 18px; }
+  a.b { display:block; padding:13px 16px; margin:10px 0; border-radius:12px; border:1.5px solid var(--line); color:var(--text); text-decoration:none; font-weight:700; }
+  a.b:hover { border-color:var(--green); }
+  a.b small { display:block; font-weight:400; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>📋 現場互動測驗</h1>
+  <p>掃 QRCode → 在 LINE 內作答 → 立即看到成績。</p>
+  <a class="b" href="admin/">管理後台<small>出題者：建立題庫、測驗、QRCode、查看結果</small></a>
+  <a class="b" href="play/?quizId=demo&mock=1">示範測驗（測試模式）<small>在電腦瀏覽器預覽玩家看到的畫面，不需要 LINE</small></a>
+  <a class="b" id="manual" href="docs/02-出題者操作手冊.md">出題者操作手冊</a>
+</div>
+<script>
+  // 部署在 GitHub Pages 時，把手冊連結指到 GitHub 上排版好的頁面
+  (function () {
+    var m = location.hostname.match(/^(.+)\.github\.io$/i);
+    if (!m) return;
+    var repo = location.pathname.split('/').filter(Boolean)[0] || location.hostname;
+    document.getElementById('manual').href = 'https://github.com/' + m[1] + '/' + repo + '/blob/main/docs/02-出題者操作手冊.md';
+  })();
+</script>
+</body>
+</html>

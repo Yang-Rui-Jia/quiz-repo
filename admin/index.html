@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>測驗管理後台</title>
+<style>
+:root {
+  --bg: #f4f6f5; --card: #fff; --text: #1b2421; --muted: #66736e; --line: #dfe6e2;
+  --green: #06c755; --green-dark: #04a446; --green-soft: #e6f8ed;
+  --red: #d93838; --red-soft: #fdecec; --amber-soft: #fff6dc; --amber: #8a6300; --blue: #2563eb;
+  --shadow: 0 1px 3px rgba(20,40,30,.08), 0 6px 18px rgba(20,40,30,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#101513; --card:#1a211e; --text:#e9f0ec; --muted:#93a29b; --line:#2b3632;
+    --green-soft:#12301f; --red-soft:#3a1c1c; --amber-soft:#3a3010; --amber:#f0c957; --blue:#7aa2ff; --shadow:none; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif; }
+.hidden { display:none !important; }
+button, input, select, textarea { font:inherit; color:inherit; }
+
+.top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:var(--card); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:10; }
+.brand { font-weight:800; font-size:17px; }
+.tabs { display:flex; gap:4px; flex:1; flex-wrap:wrap; }
+.tabs button { border:0; background:transparent; padding:8px 14px; border-radius:10px; cursor:pointer; color:var(--muted); font-weight:600; }
+.tabs button:hover { background:var(--bg); }
+.tabs button.on { background:var(--green-soft); color:var(--green-dark); }
+.who { font-size:13px; color:var(--muted); display:flex; gap:10px; align-items:center; }
+
+main { max-width:980px; margin:0 auto; padding:20px 16px 120px; }
+h2 { margin:0 0 4px; font-size:20px; }
+.sub { color:var(--muted); margin:0 0 16px; }
+.card { background:var(--card); border-radius:14px; padding:18px; box-shadow:var(--shadow); margin-bottom:14px; border:1px solid var(--line); }
+
+.btn { border:1.5px solid var(--line); background:var(--card); padding:7px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
+.btn:hover { border-color:var(--green); }
+.btn.primary { background:var(--green); border-color:var(--green); color:#fff; }
+.btn.primary:hover { background:var(--green-dark); }
+.btn.danger { color:var(--red); }
+.btn.danger:hover { border-color:var(--red); }
+.btn.sm { padding:3px 9px; font-size:13px; border-radius:8px; }
+.btn[disabled] { opacity:.5; cursor:not-allowed; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.sp { flex:1; }
+
+label.f { display:block; margin:0 0 12px; font-weight:600; font-size:14px; }
+label.f small { font-weight:400; color:var(--muted); }
+input[type=text], input[type=password], select, textarea {
+  display:block; width:100%; margin-top:4px; padding:8px 10px; border:1.5px solid var(--line);
+  border-radius:10px; background:var(--card); font-weight:400;
+}
+input:focus, select:focus, textarea:focus { outline:2px solid var(--green); outline-offset:0; border-color:var(--green); }
+textarea { resize:vertical; }
+.grid3 { display:grid; grid-template-columns:1fr 1fr 110px; gap:12px; }
+@media (max-width:640px){ .grid3 { grid-template-columns:1fr; } }
+
+.notice { padding:10px 14px; border-radius:10px; background:var(--amber-soft); color:var(--amber); margin-bottom:14px; font-size:14px; }
+.notice.err { background:var(--red-soft); color:var(--red); }
+.notice.ok { background:var(--green-soft); color:var(--green-dark); }
+.badge { display:inline-block; padding:1px 9px; border-radius:99px; font-size:12px; font-weight:700; background:var(--bg); color:var(--muted); }
+.badge.g { background:var(--green-soft); color:var(--green-dark); }
+.badge.a { background:var(--amber-soft); color:var(--amber); }
+code, .mono { font-family:ui-monospace,Consolas,monospace; font-size:13px; }
+ol.steps { padding-left:20px; margin:8px 0 0; }
+ol.steps li { margin:6px 0; }
+
+/* 題庫 */
+.split { display:grid; grid-template-columns:230px 1fr; gap:14px; align-items:start; }
+@media (max-width:720px){ .split { grid-template-columns:1fr; } }
+.list button { display:flex; width:100%; justify-content:space-between; text-align:left; border:0; background:transparent; padding:9px 12px; border-radius:10px; cursor:pointer; }
+.list button:hover { background:var(--bg); }
+.list button.on { background:var(--green-soft); color:var(--green-dark); font-weight:700; }
+.list .n { color:var(--muted); font-size:13px; }
+
+/* 測驗列表 */
+.qrow { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.qrow .t { flex:1; min-width:180px; }
+.qrow .t b { font-size:16px; }
+.qrow .t div { color:var(--muted); font-size:13px; }
+
+/* 題目編輯 */
+.qcard { background:var(--card); border:1.5px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+.qcard.bad { border-color:var(--red); }
+.qcard.dragging { opacity:.4; }
+.qcard.over { border-color:var(--green); box-shadow:0 0 0 3px var(--green-soft); }
+.qhead { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.handle { cursor:grab; user-select:none; color:var(--muted); font-size:20px; line-height:1; padding:0 4px; }
+.orow { display:flex; align-items:center; gap:8px; margin:6px 0; }
+.orow input[type=text] { margin:0; }
+.orow b { width:22px; text-align:center; color:var(--muted); }
+.orow input[type=radio] { accent-color:var(--green); width:18px; height:18px; }
+.chips { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 10px; }
+.chip { padding:4px 12px; border-radius:99px; border:1.5px solid var(--line); font-size:14px; }
+.chip.ok { border-color:var(--green); background:var(--green-soft); color:var(--green-dark); font-weight:700; }
+.savebar { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line); padding:10px 20px; z-index:9; }
+.savebar .in { max-width:980px; margin:0 auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+/* 發布 */
+.qrbox { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+.qrbox canvas { width:280px; height:280px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+.urlbox { display:flex; gap:8px; }
+.urlbox input { margin:0; }
+
+/* 結果 */
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-bottom:14px; }
+.stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.stat .v { font-size:26px; font-weight:800; color:var(--green-dark); line-height:1.2; }
+.stat .k { font-size:13px; color:var(--muted); }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
+.acc { display:flex; align-items:center; gap:10px; margin:6px 0; font-size:14px; }
+.acc .l { width:150px; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acc .b { flex:1; height:10px; background:var(--line); border-radius:5px; overflow:hidden; }
+.acc .b i { display:block; height:100%; background:var(--green); }
+.acc .p { width:48px; text-align:right; flex:none; color:var(--muted); }
+.acc.low .b i { background:var(--red); }
+
+#toast { position:fixed; left:50%; top:70px; transform:translateX(-50%); z-index:50; display:grid; gap:8px; }
+#toast div { background:#1b2421; color:#fff; padding:10px 18px; border-radius:12px; box-shadow:0 6px 24px rgba(0,0,0,.25); max-width:90vw; }
+#toast div.err { background:var(--red); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">📋 測驗管理後台</div>
+  <nav class="tabs hidden" id="tabs">
+    <button data-tab="quizzes">測驗</button>
+    <button data-tab="cats">題庫</button>
+    <button data-tab="publish">發布 / QRCode</button>
+    <button data-tab="results">作答結果</button>
+  </nav>
+  <div class="who hidden" id="who"><span id="whoText"></span><button class="btn sm" id="btnLogout">登出</button></div>
+</header>
+
+<main>
+  <!-- ========== 連線 ========== -->
+  <section id="p-login" class="hidden">
+    <div class="card" style="max-width:520px;margin:30px auto">
+      <h2>登入管理後台</h2>
+      <p class="sub">請輸入管理密碼。密碼由系統擁有者提供。</p>
+      <label class="f">管理密碼
+        <input type="password" id="inKey" autocomplete="current-password" placeholder="輸入管理密碼">
+      </label>
+      <div class="row"><button class="btn primary" id="btnConnect">登入</button></div>
+      <div id="loginErr" class="notice err hidden" style="margin-top:14px"></div>
+      <p class="sub" style="margin:14px 0 0">密碼只會存在這台電腦的瀏覽器裡（登出即清除）。請只在自己的電腦使用，並且不要把密碼傳給別人。</p>
+    </div>
+  </section>
+
+  <!-- ========== 測驗 ========== -->
+  <section id="p-quizzes" class="hidden">
+    <div id="quizListView">
+      <div class="row" style="margin-bottom:12px">
+        <div><h2>測驗</h2><p class="sub" style="margin:0">一場測驗 = 一組題目（建議 10 題）。建立後到「發布」產生 QRCode。</p></div>
+        <span class="sp"></span>
+        <button class="btn primary" id="btnNewQuiz">＋ 建立新測驗</button>
+      </div>
+      <div id="quizList"></div>
+    </div>
+
+    <div id="quizEditView" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <h2 id="edTitleH">編輯測驗</h2><span class="sp"></span>
+      </div>
+      <div class="card">
+        <label class="f">測驗名稱 <input type="text" id="edTitle" placeholder="例如：岩石大挑戰"></label>
+        <label class="f">說明文字 <small>（選填，會顯示在玩家答題頁最上方）</small>
+          <input type="text" id="edDesc" placeholder="例如：請依照展示的岩石作答"></label>
+        <div class="grid3" style="grid-template-columns:1fr auto;align-items:end">
+          <label class="f" style="margin:0">測驗代碼 <small id="idHint">（英數字與 - _，建立後不能改）</small>
+            <input type="text" id="edId" class="mono"></label>
+          <label class="f" style="margin:0;padding-bottom:8px"><input type="checkbox" id="edRetake" style="width:auto;display:inline;margin-right:6px">允許重複作答</label>
+        </div>
+      </div>
+
+      <div class="row" style="margin:16px 0 8px">
+        <h2 style="font-size:17px">題目</h2><span class="badge" id="qCount"></span>
+      </div>
+      <div id="qList"></div>
+      <div class="row">
+        <button class="btn" id="btnAddAuto">＋ 自動生成選項題</button>
+        <button class="btn" id="btnAddManual">＋ 手動輸入選項題</button>
+      </div>
+      <p class="sub" style="margin-top:10px">▲▼ 或拖曳左邊的 ⠿ 可以調整順序。<b>自動生成</b>：選類別 + 正解，系統從該類別抽干擾選項。<b>手動輸入</b>：自己打題目與選項。</p>
+
+      <div class="savebar"><div class="in">
+        <button class="btn" id="btnEdBack">← 返回列表</button>
+        <span class="sp"></span>
+        <span id="edStatus" class="sub" style="margin:0"></span>
+        <button class="btn primary" id="btnEdSave">儲存測驗</button>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ========== 題庫 ========== -->
+  <section id="p-cats" class="hidden">
+    <h2>題庫</h2>
+    <p class="sub">每個「類別」是一份答案清單（例如「高硬度岩石」），自動生成題會從這裡抽干擾選項。</p>
+    <div class="split">
+      <div class="card list">
+        <div id="catList"></div>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="newCatName" placeholder="新類別名稱" style="margin:0;flex:1;min-width:0">
+          <button class="btn sm" id="btnNewCat">新增</button>
+        </div>
+      </div>
+      <div class="card" id="catEditor">
+        <p class="sub">← 從左邊選一個類別，或新增一個。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 發布 ========== -->
+  <section id="p-publish" class="hidden">
+    <h2>發布 / QRCode</h2>
+    <p class="sub">選一場測驗，取得玩家掃描用的 QRCode，可以下載或直接列印海報。</p>
+    <div class="card">
+      <label class="f">選擇測驗 <select id="pubQuiz"></select></label>
+      <div id="pubBody"></div>
+    </div>
+  </section>
+
+  <!-- ========== 結果 ========== -->
+  <section id="p-results" class="hidden">
+    <div class="row" style="margin-bottom:12px">
+      <div><h2>作答結果</h2><p class="sub" style="margin:0">資料來自 Google Sheet，新的作答會自動出現。</p></div>
+      <span class="sp"></span>
+      <a id="sheetLink" class="btn hidden" target="_blank" rel="noopener">開啟 Google Sheet ↗</a>
+    </div>
+    <div class="card">
+      <div class="grid3" style="grid-template-columns:1fr auto;align-items:end">
+        <label class="f" style="margin:0">測驗 <select id="resQuiz"></select></label>
+        <button class="btn primary" id="btnLoadRes">載入</button>
+      </div>
+      <label style="display:block;margin-top:10px;font-size:14px"><input type="checkbox" id="resAuto"> 每 10 秒自動更新（現場監控用）</label>
+      <div id="resErr" class="notice err hidden" style="margin-top:12px"></div>
+    </div>
+    <div id="resBody"></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script src="../assets/qrcode.js"></script>
+<script src="../config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
