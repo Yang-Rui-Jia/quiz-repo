@@ -15,9 +15,6 @@ window.APP_CONFIG = {
   // 後端（Cloudflare Worker）的網址，例如 "https://quiz-api.你的名稱.workers.dev"
   apiUrl: "https://quiz-api.examquiz.workers.dev",
 
-  // 舊版後端（Google Apps Script）的網址。只有 apiUrl 留空時才會用到；換到 Cloudflare 之後可以刪掉這行。
-  gasUrl: "https://script.google.com/macros/s/AKfycbyaZFLNaqWJzQ5nIC_qsb2W6WpN6pWy5k01HvNuH_EJRwOzbwnQOZAsPbSYJBivxx5S/exec",
-
   // LINE 官方帳號的 Basic ID（要含 @），例如 "@123abcde"
   // 在 LINE Official Account Manager 左上角、或「設定 → 帳號設定」可以看到
   oaId: "@254dxsyq"
