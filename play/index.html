@@ -269,13 +269,24 @@ h1 { font-size: 22px; line-height: 1.35; margin: 4px 0 4px; }
   function api(payload) {
     if (MOCK) return mockApi(payload);
     payload.token = state.token; payload.key = state.key;
+    payload.rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
     if (!cfg.gasUrl) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 gasUrl）'));
-    var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 20000);
-    return fetch(cfg.gasUrl, { method: 'POST', body: JSON.stringify(payload), signal: ctrl.signal })
-      .then(function (r) { return r.json(); })
-      .catch(function (e) { throw new Error(e.name === 'AbortError' ? '連線逾時，請檢查網路後再試一次' : '連線失敗，請檢查網路後再試一次'); })
-      .then(function (j) { clearTimeout(timer); return j; });
+    var text = JSON.stringify(payload), attempt = 0;
+    // Google 後端偶爾會回一個不是 JSON 的空殼回應，或網路瞬間斷掉：自動重試最多 4 次。
+    // 每次重試帶同一個 rid / submissionId，後端認得是同一次請求，不會重複記錄成績。
+    function once() {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 15000);
+      return fetch(cfg.gasUrl, { method: 'POST', body: text, signal: ctrl.signal })
+        .then(function (r) { return r.text(); })
+        .then(function (t) { clearTimeout(timer); return JSON.parse(t); })
+        .catch(function (e) {
+          clearTimeout(timer);
+          if (++attempt < 4) return new Promise(function (res) { setTimeout(res, 300 * attempt); }).then(once);
+          throw new Error(e && e.name === 'AbortError' ? '連線逾時，請檢查網路後再試一次' : '連線不穩定，請檢查網路後再試一次');
+        });
+    }
+    return once();
   }
 
   // 測試模式：用內建的 sample-quiz.json 假裝後端（連同「後端算分」也在這裡模擬）

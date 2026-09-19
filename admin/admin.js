@@ -53,14 +53,25 @@ function errText(code) {
 }
 function call(action, payload) {
   if (!cfg.gasUrl) return Promise.reject(new Error('系統尚未設定完成（config.js 缺少 gasUrl）'));
-  var body = Object.assign({ action: action, key: S.key }, payload || {});
-  // 用 text/plain 送 JSON 可避免瀏覽器做 CORS 預檢，GAS 才收得到
-  return fetch(cfg.gasUrl, { method: 'POST', body: JSON.stringify(body) })
-    .then(function (r) { return r.json(); }, function () { throw new Error('連線失敗，請檢查網路'); })
-    .then(function (j) {
-      if (!j.ok) { var e = new Error(errText(j.error)); e.code = j.error; throw e; }
-      return j;
-    });
+  var rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+  var text = JSON.stringify(Object.assign({ action: action, key: S.key, rid: rid }, payload || {}));
+  var attempt = 0;
+  // 用 text/plain 送 JSON 可避免瀏覽器做 CORS 預檢，GAS 才收得到。
+  // Google 後端偶爾會回一個不是 JSON 的空殼回應（畫面上會看到 "Unexpected token 'L'..."），或網路瞬間斷掉：
+  // 自動重試最多 4 次。每次重試帶同一個 rid，後端認得是同一次請求，儲存/刪除不會重複執行。
+  function once() {
+    return fetch(cfg.gasUrl, { method: 'POST', body: text })
+      .then(function (r) { return r.text(); })
+      .then(function (t) { return JSON.parse(t); })
+      .catch(function () {
+        if (++attempt < 4) return new Promise(function (res) { setTimeout(res, 300 * attempt); }).then(once);
+        throw new Error('連線不穩定，已自動重試仍失敗，請稍後再試');
+      });
+  }
+  return once().then(function (j) {
+    if (!j.ok) { var e = new Error(errText(j.error)); e.code = j.error; throw e; }
+    return j;
+  });
 }
 
 // =====================================================================

@@ -36,6 +36,7 @@ const MAX_RESULT_ROWS = 5000;
 const QUIZ_CACHE_SECONDS = 21600;
 const TOKEN_CACHE_SECONDS = 300;
 const DONE_CACHE_SECONDS = 3600;
+const WRITE_ACTIONS = ['submit', 'admin_saveCategory', 'admin_deleteCategory', 'admin_saveQuiz', 'admin_deleteQuiz'];
 
 // 第一次 setup() 時放進去的範例資料（只有在「題庫」「測驗」是空的時候才會放）
 const SEED = {"categories":{"低硬度岩石":["石灰岩","頁岩","砂岩","泥岩","板岩","白雲岩","礫岩","凝灰岩"],"常見酒類":["啤酒","紅酒","白酒","清酒","威士忌","伏特加","高粱酒","琴酒","白蘭地","龍舌蘭"],"高硬度岩石":["花崗岩","石英岩","玄武岩","輝長岩","片麻岩","角閃岩","安山岩","流紋岩"]},"quiz":{"quizId":"demo","title":"示範測驗：岩石與酒類","description":"這是系統內建的示範測驗，共 10 題。作答完成後按「檢視作答總覽」確認，再送出即可看到成績。","allowRetake":true,"questions":[{"id":"q1","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"花崗岩","optionCount":5,"options":["流紋岩","輝長岩","角閃岩","玄武岩","花崗岩"],"correctIndex":4},{"id":"q2","mode":"auto","question":"請選出正確答案","category":"高硬度岩石","answer":"玄武岩","optionCount":5,"options":["玄武岩","花崗岩","流紋岩","角閃岩","石英岩"],"correctIndex":0},{"id":"q3","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"石灰岩","optionCount":5,"options":["頁岩","凝灰岩","砂岩","泥岩","石灰岩"],"correctIndex":4},{"id":"q4","mode":"auto","question":"請選出正確答案","category":"低硬度岩石","answer":"頁岩","optionCount":5,"options":["凝灰岩","石灰岩","泥岩","板岩","頁岩"],"correctIndex":4},{"id":"q5","mode":"manual","question":"以下哪種酒精飲料的酒精濃度最低？","options":["啤酒","威士忌","琴酒","高粱酒","伏特加"],"correctIndex":0},{"id":"q6","mode":"auto","question":"請選出正確答案","category":"常見酒類","answer":"清酒","optionCount":5,"options":["高粱酒","清酒","威士忌","白蘭地","啤酒"],"correctIndex":1},{"id":"q7","mode":"manual","question":"下列哪一種岩石屬於火成岩？","options":["石灰岩","花崗岩","大理岩","板岩","砂岩"],"correctIndex":1},{"id":"q8","mode":"manual","question":"下列哪一種岩石屬於沉積岩？","options":["玄武岩","砂岩","石英岩","片麻岩","安山岩"],"correctIndex":1},{"id":"q9","mode":"manual","question":"摩氏硬度表中，硬度最高的礦物是？","options":["螢石","滑石","方解石","石英","鑽石"],"correctIndex":4},{"id":"q10","mode":"manual","question":"威士忌的主要原料是？","options":["甘蔗","龍舌蘭","葡萄","穀物","馬鈴薯"],"correctIndex":3}]}};
@@ -62,22 +63,37 @@ function doPost(e) {
   }
 
   try {
-    switch (body.action) {
-      // 玩家
-      case 'start':               return json_(actionStart_(body));
-      case 'submit':              return json_(actionSubmit_(body));
-      // 管理後台
-      case 'results':             return json_(actionResults_(body));
-      case 'admin_list':          return json_(adminList_(body));
-      case 'admin_saveCategory':  return json_(adminSaveCategory_(body));
-      case 'admin_deleteCategory':return json_(adminDeleteCategory_(body));
-      case 'admin_saveQuiz':      return json_(adminSaveQuiz_(body));
-      case 'admin_deleteQuiz':    return json_(adminDeleteQuiz_(body));
-      default:                    return json_({ ok: false, error: 'unknown_action' });
+    // 會「改資料」的動作，網頁重試時會帶同一個 rid：第一次成功的結果先記下來，重送就直接回同一個結果，
+    // 不會重複儲存（Google 後端偶爾會回一個空殼回應，網頁收到後會自動重試）
+    const rid = String(body.rid || '').slice(0, 64);
+    const cacheable = rid && WRITE_ACTIONS.indexOf(body.action) >= 0;
+    const cache = CacheService.getScriptCache();
+    if (cacheable) {
+      const hit = cache.get('rid:' + rid);
+      if (hit) return ContentService.createTextOutput(hit).setMimeType(ContentService.MimeType.JSON);
     }
+    const text = JSON.stringify(route_(body));
+    if (cacheable && text.indexOf('"ok":true') === 1) cache.put('rid:' + rid, text, 600);
+    return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     console.error(err && err.stack || err);
     return json_({ ok: false, error: String(err && err.message || err) });
+  }
+}
+
+function route_(body) {
+  switch (body.action) {
+    // 玩家
+    case 'start':                return actionStart_(body);
+    case 'submit':               return actionSubmit_(body);
+    // 管理後台
+    case 'results':              return actionResults_(body);
+    case 'admin_list':           return adminList_(body);
+    case 'admin_saveCategory':   return adminSaveCategory_(body);
+    case 'admin_deleteCategory': return adminDeleteCategory_(body);
+    case 'admin_saveQuiz':       return adminSaveQuiz_(body);
+    case 'admin_deleteQuiz':     return adminDeleteQuiz_(body);
+    default:                     return { ok: false, error: 'unknown_action' };
   }
 }
 
